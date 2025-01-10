@@ -42,7 +42,7 @@ pub async fn resolve_service(client: Client, target: &str) -> Result<ServiceInfo
     })
 }
 
-fn parse_full_dns_name<'a>(parts: &'a [&'a str]) -> Result<(&'a str, &'a str)> {
+pub fn parse_full_dns_name<'a>(parts: &'a [&'a str]) -> Result<(&'a str, &'a str)> {
     if parts.len() >= 2 {
         Ok((parts[0], parts[1]))
     } else {

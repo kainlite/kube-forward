@@ -1,8 +1,6 @@
-#![allow(unused_imports)]
-#![allow(dead_code)]
 use metrics::{counter, gauge};
-use std::time::Instant;
 
+#[derive(Clone, Debug, PartialEq)]
 pub struct ForwardMetrics {
     name: String,
 }

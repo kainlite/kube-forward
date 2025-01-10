@@ -5,6 +5,14 @@ edition = "2021"
 authors = ["Gabriel <kainlite@gmail.com>"]
 description = "A persistent port-forward manager for Kubernetes"
 
+[[bin]]
+doc = false
+name = "kube-forward"
+path = "src/main.rs"
+
+[lib]
+path = "src/lib.rs"
+
 [dependencies]
 # Kubernetes dependencies
 kube = { version = "0.98.0", features = ["runtime", "derive", "client", "config", "ws"] }
@@ -39,3 +47,4 @@ socket2 = "0.5.8"
 
 [dev-dependencies]
 tokio-test = "0.4.3"
+tokio = { version = "1.0", features = ["full", "test-util"] }

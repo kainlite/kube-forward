@@ -5,19 +5,16 @@ use metrics_exporter_prometheus::PrometheusBuilder;
 use std::path::PathBuf;
 use tracing::{error, info};
 
-mod config;
-mod dns;
-mod error;
-mod forward;
-mod metrics;
-
-use crate::{config::ForwardConfig, dns::resolve_service, forward::PortForwardManager};
+use kube_forward::{config::ForwardConfig, forward::PortForwardManager, util::resolve_service};
 
 #[derive(Parser)]
 #[command(author, version, about)]
 struct Cli {
     #[arg(short, long, default_value = "config.yaml")]
     config: PathBuf,
+
+    #[arg(short, long)]
+    expose_metrics: bool,
 
     #[arg(short, long, default_value = "9292")]
     metrics_port: u16,
@@ -32,10 +29,13 @@ async fn main() -> Result<()> {
     let cli = Cli::parse();
 
     // Initialize metrics
-    let builder = PrometheusBuilder::new();
-    builder
-        .with_http_listener(([0, 0, 0, 0], cli.metrics_port))
-        .install()?;
+    if cli.expose_metrics {
+        let builder = PrometheusBuilder::new();
+        builder
+            .with_http_listener(([0, 0, 0, 0], cli.metrics_port))
+            .add_global_label("service", "kube-forward")
+            .install()?;
+    }
 
     // Load configuration
     let config_content = tokio::fs::read_to_string(&cli.config).await?;
