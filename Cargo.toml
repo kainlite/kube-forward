@@ -23,7 +23,7 @@ tokio = { version = "1.35.1", features = ["full"] }
 
 # Error handling
 anyhow = "1.0.79"
-thiserror = "1.0.56"
+thiserror = "2.0.11"
 
 # Configuration
 serde = { version = "1.0.195", features = ["derive"] }
