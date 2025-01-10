@@ -9,17 +9,12 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Run cargo-tarpaulin
-        uses: actions-rs/tarpaulin@v0.1
-        with:
-          version: '0.31.4'
-          args: '-- --test-threads 1'
-
       - name: Create k8s Kind Cluster
         uses: helm/kind-action@v1
 
       - name: Generate code coverage
         run: |
+          cargo install tarpaulin
           cargo +nightly tarpaulin --verbose --all-features --workspace --timeout 120 --out xml
 
       - name: Upload coverage reports to Codecov
