@@ -1,0 +1,522 @@
+#![allow(unused_imports)]
+#![allow(dead_code)]
+use socket2::{SockRef, TcpKeepalive};
+
+use kube::{
+    api::{Api, DeleteParams, PostParams},
+    runtime::wait::{await_condition, conditions::is_pod_running},
+    Client, ResourceExt,
+};
+
+use crate::{
+    config::ForwardConfig,
+    config::PodSelector,
+    dns::ServiceInfo,
+    error::{PortForwardError, Result},
+};
+use anyhow;
+use chrono::DateTime;
+use chrono::Utc;
+use k8s_openapi::api::core::v1::Pod;
+use std::sync::Arc;
+use tokio::sync::{broadcast, RwLock};
+
+use tracing::{debug, error, info, warn};
+
+// use futures::future::BoxFuture;
+// use futures::FutureExt;
+// use futures::{StreamExt, TryStreamExt};
+use futures::TryStreamExt;
+
+use std::net::SocketAddr;
+// use tokio::net::TcpStream;
+use tokio::{
+    io::{AsyncRead, AsyncWrite},
+    net::TcpListener,
+};
+use tokio_stream::wrappers::TcpListenerStream;
+
+#[derive(Debug)]
+pub struct HealthCheck {
+    last_check: Arc<RwLock<Option<DateTime<Utc>>>>,
+    failures: Arc<RwLock<u32>>,
+}
+
+impl HealthCheck {
+    pub fn new() -> Self {
+        Self {
+            last_check: Arc::new(RwLock::new(None)),
+            failures: Arc::new(RwLock::new(0)),
+        }
+    }
+
+    pub async fn check_connection(&self, local_port: u16) -> bool {
+        use tokio::net::TcpStream;
+
+        match TcpStream::connect(format!("127.0.0.1:{}", local_port)).await {
+            Ok(_) => {
+                *self.failures.write().await = 0;
+                *self.last_check.write().await = Some(Utc::now());
+                true
+            }
+            Err(_) => {
+                let mut failures = self.failures.write().await;
+                *failures += 1;
+                false
+            }
+        }
+    }
+}
+
+// Represents the state of a port-forward
+#[derive(Debug, Clone, PartialEq)]
+pub enum ForwardState {
+    Starting,
+    Connected,
+    Disconnected,
+    Failed(String),
+    Stopping,
+}
+
+#[derive(Debug, Clone)]
+pub struct PortForward {
+    config: ForwardConfig,
+    service_info: ServiceInfo,
+    state: Arc<RwLock<ForwardState>>,
+    shutdown: broadcast::Sender<()>,
+}
+
+impl PortForward {
+    pub fn new(config: ForwardConfig, service_info: ServiceInfo) -> Self {
+        let (shutdown_tx, _) = broadcast::channel(1);
+        Self {
+            config,
+            service_info,
+            state: Arc::new(RwLock::new(ForwardState::Starting)),
+            shutdown: shutdown_tx,
+        }
+    }
+
+    pub async fn start(&self, client: Client) -> Result<()> {
+        let mut retry_count = 0;
+        let mut shutdown_rx = self.shutdown.subscribe();
+
+        loop {
+            if retry_count >= self.config.options.max_retries {
+                let err_msg = "Max retry attempts reached".to_string();
+                *self.state.write().await = ForwardState::Failed(err_msg.clone());
+                return Err(PortForwardError::ConnectionError(err_msg));
+            }
+
+            match self.establish_forward(&client).await {
+                Ok(()) => {
+                    *self.state.write().await = ForwardState::Connected;
+                    info!("Port-forward established for {}", self.config.name);
+
+                    // Monitor the connection
+                    tokio::select! {
+                        _ = shutdown_rx.recv() => {
+                            info!("Received shutdown signal for {}", self.config.name);
+                            break;
+                        }
+                        _ = self.monitor_connection(&client) => {
+                            warn!("Connection lost for {}, attempting to reconnect", self.config.name);
+                            *self.state.write().await = ForwardState::Disconnected;
+                        }
+                    }
+                }
+                Err(e) => {
+                    warn!(
+                        "Failed to establish port-forward for {}: {}",
+                        self.config.name, e
+                    );
+                    retry_count += 1;
+                    tokio::time::sleep(self.config.options.retry_interval).await;
+                    continue;
+                }
+            }
+        }
+
+        Ok(())
+    }
+
+    async fn monitor_connection(&self, client: &Client) -> Result<()> {
+        let health_check = HealthCheck::new();
+        let mut interval = tokio::time::interval(self.config.options.health_check_interval);
+
+        loop {
+            interval.tick().await;
+
+            // Check TCP connection
+            if !health_check.check_connection(self.config.ports.local).await {
+                return Err(PortForwardError::ConnectionError(
+                    "Connection health check failed".to_string(),
+                ));
+            }
+
+            // Check pod status
+            if let Ok(pod) = self.get_pod(client).await {
+                if let Some(status) = &pod.status {
+                    if let Some(phase) = &status.phase {
+                        if phase != "Running" {
+                            return Err(PortForwardError::ConnectionError(
+                                "Pod is no longer running".to_string(),
+                            ));
+                        }
+                    }
+                }
+            } else {
+                return Err(PortForwardError::ConnectionError(
+                    "Pod not found".to_string(),
+                ));
+            }
+        }
+    }
+
+    async fn establish_forward(&self, client: &Client) -> Result<()> {
+        // Get pod for the service
+        let pod = self.get_pod(client).await?;
+        // Clone the name to avoid lifetime issues
+        let pod_name =
+            pod.metadata.name.clone().ok_or_else(|| {
+                PortForwardError::ConnectionError("Pod name not found".to_string())
+            })?;
+
+        // Create Api instance for the namespace
+        let pods: Api<Pod> = Api::namespaced(client.clone(), &self.service_info.namespace);
+
+        // Create TCP listener for the local port
+        println!(
+            "Creating TCP listener for the local port: {}",
+            self.config.ports.local
+        );
+        let addr = SocketAddr::from(([127, 0, 0, 1], self.config.ports.local));
+        let listener = TcpListener::bind(addr).await.map_err(|e| match e.kind() {
+            std::io::ErrorKind::AddrInUse => PortForwardError::ConnectionError(format!(
+                "Port {} is already in use. Please choose a different local port",
+                self.config.ports.local
+            )),
+            _ => PortForwardError::ConnectionError(format!("Failed to bind to port: {}", e)),
+        })?;
+
+        // Set TCP keepalive
+        // let tcp = TcpStream::connect(&addr).await?;
+        let ka = TcpKeepalive::new().with_time(std::time::Duration::from_secs(30));
+        let sf = SockRef::from(&listener);
+        let _ = sf.set_tcp_keepalive(&ka);
+
+        // Create TCP listener for the local port
+        // let addr = SocketAddr::from(([127, 0, 0, 1], self.config.ports.local));
+        // let listener = TcpListener::bind(addr).await.map_err(|e| {
+        //     PortForwardError::ConnectionError(format!("Failed to bind to port: {}", e))
+        // })?;
+
+        // Set state to connected
+        *self.state.write().await = ForwardState::Connected;
+
+        // Clone values needed for the async task
+        let state = self.state.clone();
+        let name = self.config.name.clone();
+        let remote_port = self.config.ports.remote;
+        let mut shutdown = self.shutdown.subscribe();
+
+        // Spawn the main forwarding task
+        tokio::spawn(async move {
+            let mut listener_stream = TcpListenerStream::new(listener);
+            let name = name.as_str(); // Use as_str() to get a &str we can copy
+
+            loop {
+                tokio::select! {
+                    // Handle new connections
+                    Ok(Some(client_conn)) = listener_stream.try_next() => {
+                        if let Ok(peer_addr) = client_conn.peer_addr() {
+                            info!(%peer_addr, "New connection for {}", name);
+                        }
+
+                        let pods = pods.clone();
+                        let pod_name = pod_name.clone();
+
+                        tokio::spawn(async move {
+                            if let Err(e) = Self::forward_connection(&pods, pod_name, remote_port, client_conn).await {
+                                error!("Failed to forward connection: {}", e);
+                            }
+                        });
+                    }
+
+                    // Handle shutdown signal
+                    _ = shutdown.recv() => {
+                        info!("Received shutdown signal for {}", name);
+                        *state.write().await = ForwardState::Disconnected;
+                        break;
+                    }
+
+                    else => {
+                        error!("Port forward {} listener closed", name);
+                        *state.write().await = ForwardState::Failed("Listener closed unexpectedly".to_string());
+                        break;
+                    }
+                }
+            }
+        });
+
+        Ok(())
+    }
+
+    async fn forward_connection(
+        pods: &Api<Pod>,
+        pod_name: String,
+        port: u16,
+        mut client_conn: impl AsyncRead + AsyncWrite + Unpin,
+    ) -> anyhow::Result<()> {
+        debug!("Starting port forward for port {}", port);
+
+        // Create port forward
+        let mut pf = pods
+            .portforward(&pod_name, &[port])
+            .await
+            .map_err(|e| anyhow::anyhow!("Failed to create portforward: {}", e))?;
+
+        // Get the stream for our port
+        let mut upstream_conn = pf
+            .take_stream(port) // Use port instead of 0
+            .ok_or_else(|| {
+                anyhow::anyhow!("Failed to get port forward stream for port {}", port)
+            })?;
+
+        debug!("Port forward stream established for port {}", port);
+
+        // Copy data bidirectionally with timeout
+        match tokio::time::timeout(
+            std::time::Duration::from_secs(30), // 30 second timeout
+            tokio::io::copy_bidirectional(&mut client_conn, &mut upstream_conn),
+        )
+        .await
+        {
+            Ok(Ok(_)) => {
+                debug!("Connection closed normally for port {}", port);
+            }
+            Ok(Err(e)) => {
+                warn!("Error during data transfer for port {}: {}", port, e);
+                return Err(anyhow::anyhow!("Data transfer error: {}", e));
+            }
+            Err(_) => {
+                warn!("Connection timeout for port {}", port);
+                return Err(anyhow::anyhow!("Connection timeout"));
+            }
+        }
+
+        // Clean up
+        drop(upstream_conn);
+
+        // Wait for the port forwarder to finish
+        if let Err(e) = pf.join().await {
+            warn!("Port forwarder join error: {}", e);
+        }
+
+        Ok(())
+    }
+
+    // async fn forward_connection(
+    //     pods: &Api<Pod>,
+    //     pod_name: String,
+    //     port: u16,
+    //     mut client_conn: impl AsyncRead + AsyncWrite + Unpin,
+    // ) -> anyhow::Result<()> {
+    //     // Create port forward using Pod::portforward
+    //     let mut pf = pods.portforward(&pod_name, &[port]).await?;
+
+    //     // Get the stream for our port
+    //     let mut upstream_conn = pf
+    //         .take_stream(0)
+    //         .ok_or_else(|| anyhow::anyhow!("Failed to get port forward stream"))?;
+
+    //     // Copy data bidirectionally
+    //     tokio::io::copy_bidirectional(&mut client_conn, &mut upstream_conn).await?;
+
+    //     // Clean up
+    //     drop(upstream_conn);
+    //     pf.join().await?;
+
+    //     Ok(())
+    // }
+
+    async fn get_pod(&self, client: &Client) -> Result<Pod> {
+        let pods: Api<Pod> = Api::namespaced(client.clone(), &self.service_info.namespace);
+
+        // Get all pods in the namespace
+        let pod_list = pods
+            .list(&kube::api::ListParams::default())
+            .await
+            .map_err(|e| PortForwardError::KubeError(e))?;
+
+        for pod in pod_list.items {
+            if self
+                .clone()
+                .matches_pod_selector(&pod, &self.config.pod_selector)
+            {
+                if let Some(status) = &pod.status {
+                    if let Some(phase) = &status.phase {
+                        if phase == "Running" {
+                            return Ok(pod);
+                        }
+                    }
+                }
+            }
+        }
+
+        Err(PortForwardError::ConnectionError(format!(
+            "No ready pods found matching selector for service {}",
+            self.service_info.name
+        )))
+    }
+
+    fn matches_pod_selector(self, pod: &Pod, selector: &PodSelector) -> bool {
+        // If no selector is specified, fall back to checking if service name is in any label
+        if selector.label.is_none() && selector.annotation.is_none() {
+            return pod.metadata.labels.as_ref().map_or(false, |labels| {
+                labels.values().any(|v| v == &self.service_info.name)
+            });
+        }
+
+        // Check label if specified
+        if let Some(label_selector) = &selector.label {
+            let (key, value) = self.clone().parse_selector(label_selector);
+            if !pod.metadata.labels.as_ref().map_or(false, |labels| {
+                labels.get(key).map_or(false, |v| v == value)
+            }) {
+                return false;
+            }
+        }
+
+        // Check annotation if specified
+        if let Some(annotation_selector) = &selector.annotation {
+            let (key, value) = self.clone().parse_selector(annotation_selector);
+            if !pod
+                .metadata
+                .annotations
+                .as_ref()
+                .map_or(false, |annotations| {
+                    annotations.get(key).map_or(false, |v| v == value)
+                })
+            {
+                return false;
+            }
+        }
+
+        true
+    }
+
+    fn parse_selector(self, selector: &str) -> (&str, &str) {
+        let parts: Vec<&str> = selector.split('=').collect();
+        match parts.as_slice() {
+            [key, value] => (*key, *value),
+            _ => ("", ""), // Return empty strings if format is invalid
+        }
+    }
+
+    // async fn get_pod(&self, client: &Client) -> Result<Pod> {
+    //     let pods: Api<Pod> = Api::namespaced(client.clone(), &self.service_info.namespace);
+
+    //     // Get all pods in the namespace
+    //     let pod_list = pods
+    //         .list(&kube::api::ListParams::default())
+    //         .await
+    //         .map_err(|e| PortForwardError::KubeError(e))?;
+
+    //     // Get the first running pod that has our service name in any label
+    //     for pod in pod_list.items {
+    //         if let Some(labels) = pod.metadata.labels.as_ref() {
+    //             if labels.values().any(|v| v.contains(&self.service_info.name)) {
+    //                 if let Some(status) = &pod.status {
+    //                     if let Some(phase) = &status.phase {
+    //                         if phase == "Running" {
+    //                             return Ok(pod);
+    //                         }
+    //                     }
+    //                 }
+    //             }
+    //         }
+    //     }
+
+    //     Err(PortForwardError::ConnectionError(format!(
+    //         "No ready pods found for service {}",
+    //         self.service_info.name
+    //     )))
+    // }
+
+    // async fn get_pod(&self, client: &Client) -> Result<Pod> {
+    //     let pods: Api<Pod> = Api::namespaced(client.clone(), &self.service_info.namespace);
+
+    //     // Use the correct labels for Jaeger pods
+    //     let label_selector = format!(
+    //         "app.kubernetes.io/instance={},app.kubernetes.io/name={}",
+    //         // self.service_info.name, self.service_info.name
+    //         String::from("simple"),
+    //         String::from("simple")
+    //     );
+    //     println!("Label selector: {}", label_selector);
+
+    //     let pod_list = pods
+    //         .list(&kube::api::ListParams::default().labels(&label_selector))
+    //         .await
+    //         .map_err(|e| PortForwardError::KubeError(e))?;
+
+    //     println!("Pod list: {:?}", pod_list);
+    //     // Get the first ready pod
+    //     for pod in pod_list.items {
+    //         if let Some(status) = &pod.status {
+    //             if let Some(phase) = &status.phase {
+    //                 if phase == "Running" {
+    //                     return Ok(pod);
+    //                 }
+    //             }
+    //         }
+    //     }
+
+    //     Err(PortForwardError::ConnectionError(format!(
+    //         "No ready pods found for service {}",
+    //         self.service_info.name
+    //     )))
+    // }
+}
+
+// Manager to handle multiple port-forwards
+pub struct PortForwardManager {
+    forwards: Arc<RwLock<Vec<Arc<PortForward>>>>,
+    client: Client,
+}
+
+impl PortForwardManager {
+    pub fn new(client: Client) -> Self {
+        Self {
+            forwards: Arc::new(RwLock::new(Vec::new())),
+            client,
+        }
+    }
+
+    pub async fn add_forward(
+        &self,
+        config: ForwardConfig,
+        service_info: ServiceInfo,
+    ) -> Result<()> {
+        let forward = Arc::new(PortForward::new(config, service_info));
+        self.forwards.write().await.push(forward.clone());
+
+        // Start the port-forward in a separate task
+        let client = self.client.clone();
+        tokio::spawn(async move {
+            if let Err(e) = forward.start(client).await {
+                error!("Port-forward failed: {}", e);
+            }
+        });
+
+        Ok(())
+    }
+
+    pub async fn stop_all(&self) {
+        for forward in self.forwards.read().await.iter() {
+            // forward.stop().await;
+            forward.shutdown.send(()).unwrap();
+        }
+    }
+}
