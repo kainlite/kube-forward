@@ -32,7 +32,9 @@ jobs:
   build-and-release:
     needs: create-release
     runs-on: ${{ matrix.os }}
+    continue-on-error: true
     strategy:
+      fail-fast: false
       matrix:
         include:
           - os: ubuntu-latest
@@ -43,10 +45,6 @@ jobs:
             target: aarch64-unknown-linux-gnu
             artifact_name: persistent-k8s-portforward
             asset_name: persistent-k8s-portforward-linux-arm64
-          - os: macos-latest
-            target: x86_64-apple-darwin
-            artifact_name: persistent-k8s-portforward
-            asset_name: persistent-k8s-portforward-darwin-amd64
           - os: macos-latest
             target: aarch64-apple-darwin
             artifact_name: persistent-k8s-portforward
