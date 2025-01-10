@@ -10,7 +10,7 @@ pub struct ForwardConfig {
     pub options: ForwardOptions,
     #[serde(default)]
     pub local_dns: LocalDnsConfig,
-        #[serde(default)]
+    #[serde(default)]
     pub pod_selector: PodSelector,
 }
 

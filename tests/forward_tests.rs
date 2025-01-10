@@ -2,8 +2,8 @@
 mod tests {
     use k8s_openapi::api::core::v1::Pod;
     use kube_forward::config::{ForwardConfig, PodSelector};
-    use kube_forward::util::ServiceInfo;
     use kube_forward::forward::{ForwardState, HealthCheck, PortForward};
+    use kube_forward::util::ServiceInfo;
     use std::time::Duration;
     use tokio::net::TcpListener;
 

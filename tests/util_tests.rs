@@ -100,5 +100,4 @@ mod tests {
         // Note: This will fail without a real k8s cluster or proper mocking
         assert!(result.is_err());
     }
-
 }
