@@ -7,7 +7,7 @@ on:
 
 env:
   CARGO_TERM_COLOR: always
-  BINARY_NAME: persistent-k8s-portforward
+  BINARY_NAME: kube-forward
 
 permissions:
   contents: write
@@ -39,20 +39,20 @@ jobs:
         include:
           - os: ubuntu-latest
             target: x86_64-unknown-linux-gnu
-            artifact_name: persistent-k8s-portforward
-            asset_name: persistent-k8s-portforward-linux-amd64
+            artifact_name: kube-forward
+            asset_name: kube-forward-linux-amd64
           - os: ubuntu-latest
             target: aarch64-unknown-linux-gnu
-            artifact_name: persistent-k8s-portforward
-            asset_name: persistent-k8s-portforward-linux-arm64
+            artifact_name: kube-forward
+            asset_name: kube-forward-linux-arm64
           - os: macos-latest
             target: aarch64-apple-darwin
-            artifact_name: persistent-k8s-portforward
-            asset_name: persistent-k8s-portforward-darwin-arm64
+            artifact_name: kube-forward
+            asset_name: kube-forward-darwin-arm64
           - os: windows-latest
             target: x86_64-pc-windows-msvc
-            artifact_name: persistent-k8s-portforward.exe
-            asset_name: persistent-k8s-portforward-windows-amd64.exe
+            artifact_name: kube-forward.exe
+            asset_name: kube-forward-windows-amd64.exe
 
     steps:
       - uses: actions/checkout@v4
