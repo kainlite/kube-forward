@@ -1,6 +1,6 @@
 # kube-forward
 
-[![ci](https://github.com/kainlite/kube-forward/actions/workflows/release.yml/badge.svg)](https://github.com/kainlite/kube-forward/actions/workflows/release.yml)
+[![ci](https://github.com/kainlite/kube-forward/actions/workflows/release.yaml/badge.svg)](https://github.com/kainlite/kube-forward/actions/workflows/release.yaml)
 
 
 ### kubectl persistent port-forward
