@@ -9,6 +9,9 @@ env:
   CARGO_TERM_COLOR: always
   BINARY_NAME: persistent-k8s-portforward
 
+permissions:
+  contents: write
+
 jobs:
   create-release:
     runs-on: ubuntu-latest
