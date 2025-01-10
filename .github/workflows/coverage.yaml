@@ -5,13 +5,15 @@ jobs:
   test:
     name: coverage
     runs-on: ubuntu-24.04
-    container:
-      image: xd009642/tarpaulin:develop-nightly
-      options: --security-opt seccomp=unconfined
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
 
+      - name: Run cargo-tarpaulin
+        uses: actions-rs/tarpaulin@v0.1
+        with:
+          version: '0.31.4'
+          args: '-- --test-threads 1'
 
       - name: Create k8s Kind Cluster
         uses: helm/kind-action@v1
