@@ -12,6 +12,10 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
+
+      - name: Create k8s Kind Cluster
+        uses: helm/kind-action@v1
+
       - name: Generate code coverage
         run: |
           cargo +nightly tarpaulin --verbose --all-features --workspace --timeout 120 --out xml
