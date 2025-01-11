@@ -56,7 +56,8 @@ Sample configuration for different services:
   pod_selector:
     label: "app.kubernetes.io/name=grafana"
 
-
+# Given the case that the service name matches the pod name then you don't need to use the pod_selector 
+# to specify labels
 - name: "postgres"
   target: "postgres.tr"
   ports:
@@ -69,8 +70,8 @@ Sample configuration for different services:
   # local_dns:
   #   enabled: true
   #   hostname: "grafana.localhost"  # Optional (it doesn't work yet), if you want to access it through a nice local domain
-  pod_selector:
-    label: "app=postgres"
+  # pod_selector:
+  #   label: "app=postgres"
 ```
 
 ### Install instructions

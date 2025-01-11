@@ -56,8 +56,8 @@
   # local_dns:
   #   enabled: true
   #   hostname: "grafana.localhost"  # Optional (it doesn't work yet), if you want to access it through a nice local domain
-  pod_selector:
-    label: "app=postgres"
+  # pod_selector:
+  #   label: "app=postgres"
 
 - name: "longhorn"
   target: "longhorn-frontend.longhorn-system"
