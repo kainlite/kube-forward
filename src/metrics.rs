@@ -2,7 +2,7 @@ use metrics::{counter, gauge};
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct ForwardMetrics {
-  pub(crate)   name: String,
+    pub(crate) name: String,
 }
 
 impl ForwardMetrics {

@@ -1,6 +1,6 @@
 use socket2::{SockRef, TcpKeepalive};
 
-use kube::{ api::Api, Client};
+use kube::{api::Api, Client};
 
 use crate::{
     config::ForwardConfig,
