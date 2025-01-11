@@ -44,7 +44,6 @@
   pod_selector:
     label: "app.kubernetes.io/name=grafana"
 
-
 - name: "postgres"
   target: "postgres.tr"
   ports:
@@ -59,4 +58,19 @@
   #   hostname: "grafana.localhost"  # Optional (it doesn't work yet), if you want to access it through a nice local domain
   pod_selector:
     label: "app=postgres"
+
+- name: "longhorn"
+  target: "longhorn-frontend.longhorn-system"
+  ports:
+    local: 8082 
+    remote: 8000
+  options:
+    retry_interval: 5s
+    max_retries: 30
+    health_check_interval: 10s
+  # local_dns:
+  #   enabled: true
+  #   hostname: "grafana.localhost"  # Optional (it doesn't work yet), if you want to access it through a nice local domain
+  pod_selector:
+    label: "app=longhorn-ui"
 

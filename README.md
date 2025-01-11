@@ -1,7 +1,7 @@
 # kube-forward
 
 [![ci](https://github.com/kainlite/kube-forward/actions/workflows/release.yaml/badge.svg)](https://github.com/kainlite/kube-forward/actions/workflows/release.yaml)
-
+[![codecov](https://codecov.io/gh/kainlite/kube-forward/branch/master/graph/badge.svg)](https://codecov.io/gh/kainlite/kube-forward)
 
 ### kubectl persistent port-forward
 This is a tiny tool to simplify `kubectl port-forward` written in Rust, basically the idea is to have a more persistent

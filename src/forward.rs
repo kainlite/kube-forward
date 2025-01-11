@@ -1,12 +1,6 @@
-#![allow(unused_imports)]
-#![allow(dead_code)]
 use socket2::{SockRef, TcpKeepalive};
 
-use kube::{
-    api::{Api, DeleteParams, PostParams},
-    runtime::wait::{await_condition, conditions::is_pod_running},
-    Client, ResourceExt,
-};
+use kube::{ api::Api, Client};
 
 use crate::{
     config::ForwardConfig,
@@ -27,7 +21,6 @@ use tracing::{debug, error, info, warn};
 use futures::TryStreamExt;
 
 use std::net::SocketAddr;
-// use tokio::net::TcpStream;
 use tokio::{
     io::{AsyncRead, AsyncWrite},
     net::TcpListener,
