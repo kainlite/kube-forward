@@ -396,12 +396,29 @@ impl PortForward {
             _ => ("", ""), // Return empty strings if format is invalid
         }
     }
+
+    pub async fn stop(&self) {
+        // Set state to stopping
+        *self.state.write().await = ForwardState::Stopping;
+
+        // Send shutdown signal
+        let _ = self.shutdown.send(());
+
+        // Wait a moment for cleanup
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+
+        // Set final state
+        *self.state.write().await = ForwardState::Disconnected;
+
+        // Update metrics
+        self.metrics.set_connection_status(false);
+    }
 }
 
 // Manager to handle multiple port-forwards
 pub struct PortForwardManager {
-    forwards: Arc<RwLock<Vec<Arc<PortForward>>>>,
-    client: Client,
+    pub forwards: Arc<RwLock<Vec<Arc<PortForward>>>>,
+    pub client: Client,
 }
 
 impl PortForwardManager {
@@ -433,8 +450,7 @@ impl PortForwardManager {
 
     pub async fn stop_all(&self) {
         for forward in self.forwards.read().await.iter() {
-            // forward.stop().await;
-            forward.shutdown.send(()).unwrap();
+            forward.stop().await;
         }
     }
 }

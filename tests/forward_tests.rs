@@ -170,4 +170,50 @@ mod tests {
         assert_eq!(key, "");
         assert_eq!(value, "");
     }
+
+    #[tokio::test]
+    async fn test_port_forward_stop() {
+        let config = ForwardConfig {
+            name: "test-forward".to_string(),
+            target: "test-target.test-namespace".to_string(),
+            ports: kube_forward::config::PortMapping {
+                local: 8080,
+                remote: 80,
+            },
+            pod_selector: PodSelector {
+                label: None,
+                annotation: None,
+            },
+            local_dns: kube_forward::config::LocalDnsConfig {
+                enabled: false,
+                hostname: None,
+            },
+            options: kube_forward::config::ForwardOptions {
+                max_retries: 3,
+                retry_interval: Duration::from_secs(1),
+                health_check_interval: Duration::from_secs(5),
+            },
+        };
+
+        let service_info = ServiceInfo {
+            name: "test-service".to_string(),
+            namespace: "default".to_string(),
+            ports: vec![80],
+        };
+
+        let forward = PortForward::new(config, service_info);
+
+        // Initial state should be Starting
+        assert_eq!(*forward.state.read().await, ForwardState::Starting);
+
+        // Stop the forward
+        forward.stop().await;
+
+        // State should be Disconnected after stopping
+        assert_eq!(*forward.state.read().await, ForwardState::Disconnected);
+
+        // Check that a subscriber receives the shutdown signal
+        let mut rx = forward.shutdown.subscribe();
+        assert!(rx.try_recv().is_err()); // Should be empty after stop
+    }
 }
