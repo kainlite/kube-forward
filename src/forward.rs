@@ -139,7 +139,7 @@ impl PortForward {
         Ok(())
     }
 
-    async fn monitor_connection(&self, client: &Client) -> Result<()> {
+    pub async fn monitor_connection(&self, client: &Client) -> Result<()> {
         let health_check = HealthCheck::new();
         let mut interval = tokio::time::interval(self.config.options.health_check_interval);
 
@@ -172,7 +172,7 @@ impl PortForward {
         }
     }
 
-    async fn establish_forward(&self, client: &Client) -> Result<()> {
+    pub async fn establish_forward(&self, client: &Client) -> Result<()> {
         self.metrics.record_connection_attempt();
         // Get pod for the service
         let pod = self.get_pod(client).await?;
@@ -269,7 +269,7 @@ impl PortForward {
         Ok(())
     }
 
-    async fn forward_connection(
+    pub async fn forward_connection(
         pods: &Api<Pod>,
         pod_name: String,
         port: u16,
@@ -323,7 +323,7 @@ impl PortForward {
         Ok(())
     }
 
-    async fn get_pod(&self, client: &Client) -> Result<Pod> {
+    pub async fn get_pod(&self, client: &Client) -> Result<Pod> {
         let pods: Api<Pod> = Api::namespaced(client.clone(), &self.service_info.namespace);
 
         // Get all pods in the namespace
