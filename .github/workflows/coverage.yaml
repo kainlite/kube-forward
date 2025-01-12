@@ -28,4 +28,4 @@ jobs:
         uses: codecov/codecov-action@v5
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
-          slug: kainlite/gitops-operator
+          slug: kainlite/kube-forward
