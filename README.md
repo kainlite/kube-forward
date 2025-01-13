@@ -75,14 +75,13 @@ Sample configuration for different services:
 ```
 
 ### Install instructions
-Grab or build the binary from the releases and move it to and executable location in your $PATH.
-
 ```bash
-git clone 
-cargo build --release
-```
+curl -sSL https://raw.githubusercontent.com/kainlite/kube-forward/master/scripts/install.sh | sh
 
-### Run
+#### Manual Installation
+You can also download the binary directly from the releases page.
+
+### Usage
 To run it and be able to use your port-forwards, run:
 ```bash
 ❯ RUST_LOG=info kube-forward -c config.yaml
