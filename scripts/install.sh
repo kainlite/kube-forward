@@ -70,7 +70,7 @@ main() {
     if ! command -v curl >/dev/null; then
         echo "Error: curl is required for installation"
         exit 1
-    }
+    fi
 
     local PLATFORM=$(detect_platform)
     local VERSION=$(get_latest_release)
@@ -78,7 +78,7 @@ main() {
     if [ -z "$VERSION" ]; then
         echo "Error: Unable to determine latest version"
         exit 1
-    }
+    fi
 
     install_binary "$PLATFORM" "$VERSION"
     

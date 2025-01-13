@@ -77,7 +77,7 @@ Sample configuration for different services:
 ### Install instructions
 ```bash
 curl -sSL https://raw.githubusercontent.com/kainlite/kube-forward/master/scripts/install.sh | sh
-
+```
 #### Manual Installation
 You can also download the binary directly from the releases page.
 
