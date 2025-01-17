@@ -8,41 +8,77 @@ This is a tiny tool to simplify `kubectl port-forward` written in Rust, basicall
 configuration and also be able to spin up multiple port-forwards with just one common, that don't get interrupted or
 reconnect automatically, more features will be coming soon.
 
-Sample configuration for different services:
+### Configurations
+Given that not all configurations are the same and there are a few possible options, there are some examples so you can
+get the most out of it, in some cases you might want a port-forward to die, in others you might want kube-forward to
+keep trying forever, maybe your connection can vary in speed or reliability (fine tune or test changing the retry
+interval), in a future release `retry_interval` and `health_check_interval` will become optional and their defaults will be
+5s and 10s.
+
+#### Sample entry
+```yaml
+- name: "identifier"
+  target: "<svc-name>.<namespace>"
+  ports:
+    local: <any free local port> 
+    remote: <remote port on the pod> 
+  options:
+    retry_interval: <optional> (define it in seconds for example 5s)
+    max_retries: <optional> (define it as a number for example 20)
+    health_check_interval: <optional> (define it in seconds for example 10s)
+    persistent_connection: <optional | defaults to true and ignores max_retries>
+  pod_selector:
+    label: <optional> if the <svc-name>" doesn't match the pod name you need to use a label like: app.kubernetes.io/instance=simple"
+```
+
+#### Minimal configuration example
+Assuming we have an instance called "simple" we can easily match the pod using that label.
 ```yaml
 - name: "jaeger-ui"
-  # <service name>.<namespace>
   target: "simple-query.observability"
   ports:
-    local: 8686    # Same port as remote since it's the UI standard port
-    remote: 16686   # Jaeger UI default port
+    local: 16686
+    remote: 16686
   options:
     retry_interval: 5s
-    # Max retries is optional and can be ignored if persistent_connection is set to true (defaults to 3 if missing)
-    # max_retries: 30
     health_check_interval: 10s
-    # This is true by default and it ignores max_retries
+  pod_selector:
+    label: "app.kubernetes.io/instance=simple"
+
+- name: "postgres"
+  target: "postgres.tr"
+  ports:
+    local: 5434 
+    remote: 5432   
+  options:
+    retry_interval: 5s
+    health_check_interval: 10s
+```
+
+#### Full configuration example
+Full configuration example for different services:
+```yaml
+- name: "jaeger-ui"
+  target: "simple-query.observability"
+  ports:
+    local: 8686
+    remote: 16686
+  options:
+    retry_interval: 5s
+    health_check_interval: 10s
+    max_retries: 3
     persistent_connection: false
-  # local_dns:
-  #   enabled: true
-  #   hostname: "jaeger.localhost"  # Optional (it doesn't work yet), if you want to access it through a nice local domain
-  # Given the case that the service name matches the pod name then you don't need to use the pod_selector 
-  # to specify labels
   pod_selector:
     label: "app.kubernetes.io/instance=simple"
 
 - name: "argocd-ui"
   target: "argocd-server.argocd"
   ports:
-    local: 8080    # custom port
-    remote: 8080   # https
+    local: 8080
+    remote: 8080
   options:
     retry_interval: 5s
-    max_retries: 30
     health_check_interval: 10s
-  # local_dns:
-  #   enabled: true
-  #   hostname: "argocd.localhost"  # Optional (it doesn't work yet), if you want to access it through a nice local domain
   pod_selector:
     label: "app.kubernetes.io/name=argocd-server"
 
@@ -53,16 +89,10 @@ Sample configuration for different services:
     remote: 3000   
   options:
     retry_interval: 5s
-    max_retries: 30
     health_check_interval: 10s
-  # local_dns:
-  #   enabled: true
-  #   hostname: "grafana.localhost"  # Optional (it doesn't work yet), if you want to access it through a nice local domain
   pod_selector:
     label: "app.kubernetes.io/name=grafana"
 
-# Given the case that the service name matches the pod name then you don't need to use the pod_selector 
-# to specify labels
 - name: "postgres"
   target: "postgres.tr"
   ports:
@@ -70,13 +100,7 @@ Sample configuration for different services:
     remote: 5432   
   options:
     retry_interval: 5s
-    max_retries: 30
     health_check_interval: 10s
-  # local_dns:
-  #   enabled: true
-  #   hostname: "grafana.localhost"  # Optional (it doesn't work yet), if you want to access it through a nice local domain
-  # pod_selector:
-  #   label: "app=postgres"
 ```
 
 ### Install instructions
