@@ -26,6 +26,7 @@ async fn create_test_config(name: &str, local_port: u16, remote_port: u16) -> Fo
             max_retries: 3,
             retry_interval: Duration::from_secs(1),
             health_check_interval: Duration::from_secs(5),
+            persistent_connection: false,
         },
     }
 }

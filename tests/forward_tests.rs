@@ -57,6 +57,7 @@ mod tests {
                 max_retries: 3,
                 retry_interval: Duration::from_secs(1),
                 health_check_interval: Duration::from_secs(5),
+                persistent_connection: false,
             },
         };
 
@@ -93,6 +94,7 @@ mod tests {
                 max_retries: 3,
                 retry_interval: Duration::from_secs(1),
                 health_check_interval: Duration::from_secs(5),
+                persistent_connection: true,
             },
         };
 
@@ -150,6 +152,7 @@ mod tests {
                 max_retries: 3,
                 retry_interval: Duration::from_secs(1),
                 health_check_interval: Duration::from_secs(5),
+                persistent_connection: false,
             },
         };
 
@@ -192,6 +195,7 @@ mod tests {
                 max_retries: 3,
                 retry_interval: Duration::from_secs(1),
                 health_check_interval: Duration::from_secs(5),
+                persistent_connection: false,
             },
         };
 
@@ -221,15 +225,25 @@ mod tests {
     // just a reminder in case it fails later on
     #[tokio::test]
     async fn test_establish_forward() {
+        // Find a free port first
+        let temp_listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = temp_listener.local_addr().unwrap().port();
+        drop(temp_listener); // Release the temporary listener
+
+        // Create a long-lived listener to occupy the port
+        let _listener = TcpListener::bind(format!("127.0.0.1:{}", port))
+            .await
+            .unwrap();
+
         let config = ForwardConfig {
             name: "test-forward".to_string(),
             target: "test-target.test-namespace".to_string(),
             ports: kube_forward::config::PortMapping {
-                local: 0, // Use port 0 to let OS assign random port
+                local: port, // Use the port we know is in use
                 remote: 80,
             },
             pod_selector: PodSelector {
-                label: None,
+                label: Some("k8s-app=kube-dns".to_string()), // Match kube-dns pod
                 annotation: None,
             },
             local_dns: kube_forward::config::LocalDnsConfig {
@@ -237,40 +251,42 @@ mod tests {
                 hostname: None,
             },
             options: kube_forward::config::ForwardOptions {
-                max_retries: 3,
-                retry_interval: Duration::from_secs(1),
+                max_retries: 1, // Set to 1 to fail faster
+                retry_interval: Duration::from_millis(100),
                 health_check_interval: Duration::from_secs(5),
+                persistent_connection: true,
             },
         };
 
         let service_info = ServiceInfo {
             name: "kube-dns".to_string(),
             namespace: "kube-system".to_string(),
-            ports: vec![53],
+            ports: vec![80],
         };
 
         let forward = PortForward::new(config, service_info);
         let client = kube::Client::try_default().await.unwrap();
 
-        // Test port already in use
-        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let port = listener.local_addr().unwrap().port();
+        // We purposely set the state to Disconnected to simulate a previous failure
+        // (because the port is already in use)
+        *forward.state.write().await = ForwardState::Disconnected;
 
-        let mut config_with_used_port = forward.config.clone();
-        config_with_used_port.ports.local = port;
-        let forward_with_used_port =
-            PortForward::new(config_with_used_port, forward.service_info.clone());
+        // Try to establish the forward (should fail because port is in use)
+        let result = forward.establish_forward(&client).await;
 
-        let result = forward_with_used_port.establish_forward(&client).await;
-        assert!(result.is_err());
+        assert!(result.is_err(), "Expected error but got {:?}", result);
         match result {
             Err(kube_forward::error::PortForwardError::ConnectionError(msg)) => {
-                assert!(msg.contains("already in use"));
+                assert!(
+                    msg.contains("already in use"),
+                    "Expected 'already in use' error but got: {}",
+                    msg
+                );
             }
-            _ => panic!("Expected ConnectionError for port in use"),
+            Err(e) => panic!("Expected ConnectionError for port in use, got: {:?}", e),
+            Ok(_) => panic!("Expected error but got Ok"),
         }
     }
-
     // This tests specifically depends on kind
     // just a reminder in case it fails later on
     #[tokio::test]
@@ -294,6 +310,7 @@ mod tests {
                 max_retries: 3,
                 retry_interval: Duration::from_secs(1),
                 health_check_interval: Duration::from_millis(100), // Use shorter interval for testing
+                persistent_connection: false,
             },
         };
 
@@ -329,7 +346,7 @@ mod tests {
         assert!(result.is_err());
         match result {
             Err(kube_forward::error::PortForwardError::ConnectionError(msg)) => {
-                assert!(msg.contains("Connection health check failed"));
+                assert!(msg.contains("Failed initial health checks"));
             }
             _ => panic!("Expected ConnectionError for health check failure"),
         }
@@ -372,6 +389,7 @@ mod tests {
                 max_retries: 3,
                 retry_interval: Duration::from_secs(1),
                 health_check_interval: Duration::from_secs(5),
+                persistent_connection: false,
             },
         };
 

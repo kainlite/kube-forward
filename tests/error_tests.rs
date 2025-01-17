@@ -33,6 +33,7 @@ async fn test_port_already_in_use() {
             max_retries: 1,
             retry_interval: Duration::from_millis(100),
             health_check_interval: Duration::from_secs(5),
+            persistent_connection: false,
         },
     };
 
@@ -79,6 +80,7 @@ async fn test_invalid_pod_selector() {
             max_retries: 1,
             retry_interval: Duration::from_millis(100),
             health_check_interval: Duration::from_secs(5),
+            persistent_connection: false,
         },
     };
 
@@ -124,6 +126,7 @@ async fn test_max_retries_exceeded() {
             max_retries: 2,
             retry_interval: Duration::from_millis(100),
             health_check_interval: Duration::from_secs(5),
+            persistent_connection: false,
         },
     };
 
