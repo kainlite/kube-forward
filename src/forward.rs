@@ -95,7 +95,9 @@ impl PortForward {
         let mut shutdown_rx = self.shutdown.subscribe();
 
         loop {
-            if retry_count >= self.config.options.max_retries {
+            if retry_count >= self.config.options.max_retries
+                && !self.config.options.persistent_connection
+            {
                 let err_msg = "Max retry attempts reached".to_string();
                 *self.state.write().await = ForwardState::Failed(err_msg.clone());
                 return Err(PortForwardError::ConnectionError(err_msg));
@@ -142,16 +144,65 @@ impl PortForward {
     pub async fn monitor_connection(&self, client: &Client) -> Result<()> {
         let health_check = HealthCheck::new();
         let mut interval = tokio::time::interval(self.config.options.health_check_interval);
+        let mut consecutive_failures = 0;
+        let max_failures = 3; // Allow a few failures before declaring connection lost
+
+        // Add initial delay to allow the connection to fully establish
+        tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+
+        // Verify we're in the correct state to start monitoring
+        let state = self.state.read().await;
+        if !matches!(*state, ForwardState::Connected | ForwardState::Starting) {
+            return Err(PortForwardError::ConnectionError(
+                "Cannot monitor connection: not in Connected or Starting state".to_string(),
+            ));
+        }
+        drop(state);
+
+        // Initial health check with retry
+        let mut initial_attempts = 0;
+        let max_initial_attempts = 3;
+        while initial_attempts < max_initial_attempts {
+            if health_check.check_connection(self.config.ports.local).await {
+                debug!("Initial health check passed for {}", self.config.name);
+                break;
+            }
+            initial_attempts += 1;
+            if initial_attempts < max_initial_attempts {
+                debug!(
+                    "Initial health check attempt {}/{} failed for {}, retrying...",
+                    initial_attempts, max_initial_attempts, self.config.name
+                );
+                tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+            }
+        }
+
+        if initial_attempts >= max_initial_attempts {
+            return Err(PortForwardError::ConnectionError(
+                "Failed initial health checks".to_string(),
+            ));
+        }
 
         loop {
             interval.tick().await;
 
             // Check TCP connection
             if !health_check.check_connection(self.config.ports.local).await {
-                return Err(PortForwardError::ConnectionError(
-                    "Connection health check failed".to_string(),
-                ));
+                consecutive_failures += 1;
+                if consecutive_failures > 1 {
+                    warn!(
+                        "Health check failed for {} ({}/{})",
+                        self.config.name, consecutive_failures, max_failures
+                    );
+                } else {
+                    debug!(
+                        "Health check failed for {} ({}/{})",
+                        self.config.name, consecutive_failures, max_failures
+                    );
+                }
+                continue;
             }
+            consecutive_failures = 0; // Reset counter on successful check
 
             // Check pod status
             if let Ok(pod) = self.get_pod(client).await {
@@ -173,6 +224,23 @@ impl PortForward {
     }
 
     pub async fn establish_forward(&self, client: &Client) -> Result<()> {
+        // Check current state first and update atomically
+        let mut current_state = self.state.write().await;
+        match *current_state {
+            ForwardState::Connected => {
+                debug!("Port forward {} is already connected", self.config.name);
+                return Ok(());
+            }
+            ForwardState::Starting => {
+                debug!("Port forward {} is already starting", self.config.name);
+                return Ok(());
+            }
+            _ => {
+                *current_state = ForwardState::Starting;
+            }
+        }
+        drop(current_state); // Release the lock
+
         self.metrics.record_connection_attempt();
         // Get pod for the service
         let pod = self.get_pod(client).await?;
@@ -185,22 +253,53 @@ impl PortForward {
         // Create Api instance for the namespace
         let pods: Api<Pod> = Api::namespaced(client.clone(), &self.service_info.namespace);
 
+        // Try to bind to the port with retries
+        let mut retry_count = 0;
+        let max_bind_retries = 3;
+        let bind_retry_delay = std::time::Duration::from_secs(1);
+
         // Create TCP listener for the local port
         debug!(
             "Creating TCP listener for the local port: {}",
             self.config.ports.local
         );
-        let addr = SocketAddr::from(([127, 0, 0, 1], self.config.ports.local));
-        let listener = TcpListener::bind(addr).await.map_err(|e| {
-            self.metrics.record_connection_failure();
-            match e.kind() {
-                std::io::ErrorKind::AddrInUse => PortForwardError::ConnectionError(format!(
-                    "Port {} is already in use. Please choose a different local port",
-                    self.config.ports.local
-                )),
-                _ => PortForwardError::ConnectionError(format!("Failed to bind to port: {}", e)),
+
+        let listener = loop {
+            let addr = SocketAddr::from(([127, 0, 0, 1], self.config.ports.local));
+            match TcpListener::bind(addr).await {
+                Ok(listener) => break listener,
+                Err(e) if e.kind() == std::io::ErrorKind::AddrInUse => {
+                    if retry_count >= max_bind_retries {
+                        self.metrics.record_connection_failure();
+                        return Err(PortForwardError::ConnectionError(format!(
+                            "Port {} is already in use. Please choose a different local port",
+                            self.config.ports.local
+                        )));
+                    }
+                    // Try to forcefully release the port
+                    if let Err(release_err) = self.try_release_port().await {
+                        warn!(
+                            "Failed to release port {}: {}",
+                            self.config.ports.local, release_err
+                        );
+                    }
+                    retry_count += 1;
+                    debug!(
+                        "Port {} in use, retrying in {:?}...",
+                        self.config.ports.local, bind_retry_delay
+                    );
+                    tokio::time::sleep(bind_retry_delay).await;
+                    continue;
+                }
+                Err(e) => {
+                    self.metrics.record_connection_failure();
+                    return Err(PortForwardError::ConnectionError(format!(
+                        "Failed to bind to port: {}",
+                        e
+                    )));
+                }
             }
-        })?;
+        };
 
         // Set TCP keepalive
         // let tcp = TcpStream::connect(&addr).await?;
@@ -397,6 +496,63 @@ impl PortForward {
         }
     }
 
+    async fn try_release_port(&self) -> std::io::Result<()> {
+        let addr = SocketAddr::from(([127, 0, 0, 1], self.config.ports.local));
+
+        // First check if this is our own active connection
+        let state = self.state.read().await;
+        match *state {
+            ForwardState::Connected | ForwardState::Starting => {
+                debug!(
+                    "Port {} is in use by our own active connection (state: {:?})",
+                    self.config.ports.local, state
+                );
+                return Ok(());
+            }
+            _ => drop(state),
+        }
+
+        // Try to create a temporary connection to verify the port status
+        let socket = tokio::net::TcpSocket::new_v4()?;
+
+        // Try to connect first to check if our process is actually using it
+        match tokio::net::TcpStream::connect(addr).await {
+            Ok(_) => {
+                // Double check our state again as it might have changed
+                let state = self.state.read().await;
+                if matches!(*state, ForwardState::Connected | ForwardState::Starting) {
+                    debug!(
+                        "Port {} is in use by our active connection (verified)",
+                        self.config.ports.local
+                    );
+                    Ok(())
+                } else {
+                    debug!(
+                        "Port {} is in use by another process",
+                        self.config.ports.local
+                    );
+                    Err(std::io::Error::new(
+                        std::io::ErrorKind::AddrInUse,
+                        "Port is actively in use by another process",
+                    ))
+                }
+            }
+            Err(_) => {
+                // If connect failed, try to bind
+                match socket.bind(addr) {
+                    Ok(_) => {
+                        debug!("Port {} is free", self.config.ports.local);
+                        Ok(())
+                    }
+                    Err(e) => {
+                        debug!("Port {} bind error: {}", self.config.ports.local, e);
+                        Err(e)
+                    }
+                }
+            }
+        }
+    }
+
     pub async fn stop(&self) {
         // Set state to stopping
         *self.state.write().await = ForwardState::Stopping;
@@ -406,6 +562,14 @@ impl PortForward {
 
         // Wait a moment for cleanup
         tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+
+        // Try to release the port
+        if let Err(e) = self.try_release_port().await {
+            warn!(
+                "Failed to release port {} during shutdown: {}",
+                self.config.ports.local, e
+            );
+        }
 
         // Set final state
         *self.state.write().await = ForwardState::Disconnected;

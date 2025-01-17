@@ -11,18 +11,23 @@ reconnect automatically, more features will be coming soon.
 Sample configuration for different services:
 ```yaml
 - name: "jaeger-ui"
-  # <deployment name>.<namespace>
+  # <service name>.<namespace>
   target: "simple-query.observability"
   ports:
     local: 8686    # Same port as remote since it's the UI standard port
     remote: 16686   # Jaeger UI default port
   options:
     retry_interval: 5s
-    max_retries: 30
+    # Max retries is optional and can be ignored if persistent_connection is set to true (defaults to 3 if missing)
+    # max_retries: 30
     health_check_interval: 10s
+    # This is true by default and it ignores max_retries
+    persistent_connection: false
   # local_dns:
   #   enabled: true
   #   hostname: "jaeger.localhost"  # Optional (it doesn't work yet), if you want to access it through a nice local domain
+  # Given the case that the service name matches the pod name then you don't need to use the pod_selector 
+  # to specify labels
   pod_selector:
     label: "app.kubernetes.io/instance=simple"
 

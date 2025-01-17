@@ -1,5 +1,5 @@
 - name: "jaeger-ui"
-  # <deployment name>.<namespace>
+  # <service name>.<namespace>
   target: "simple-query.observability"
   ports:
     local: 8686    # Same port as remote since it's the UI standard port
@@ -8,6 +8,8 @@
     retry_interval: 5s
     max_retries: 30
     health_check_interval: 10s
+    # This is true by default and ignores max_retries
+    persistent_connection: false
   # local_dns:
   #   enabled: true
   #   hostname: "jaeger.localhost"  # Optional (it doesn't work yet), if you want to access it through a nice local domain
@@ -21,8 +23,10 @@
     remote: 8080   # https
   options:
     retry_interval: 5s
-    max_retries: 30
+    # max_retries: 30
     health_check_interval: 10s
+    # This is true by default and ignores max_retries
+    persistent_connection: true
   # local_dns:
   #   enabled: true
   #   hostname: "argocd.localhost"  # Optional (it doesn't work yet), if you want to access it through a nice local domain

@@ -26,6 +26,8 @@ pub struct ForwardOptions {
     pub retry_interval: Duration,
     #[serde(default = "default_max_retries")]
     pub max_retries: u32,
+    #[serde(default = "default_persistent_connection")]
+    pub persistent_connection: bool,
     #[serde(with = "humantime_serde", default = "default_health_check_interval")]
     pub health_check_interval: Duration,
 }
@@ -52,4 +54,8 @@ fn default_max_retries() -> u32 {
 
 fn default_health_check_interval() -> Duration {
     Duration::from_secs(10)
+}
+
+fn default_persistent_connection() -> bool {
+    true
 }
