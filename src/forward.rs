@@ -496,7 +496,7 @@ impl PortForward {
         }
     }
 
-    async fn try_release_port(&self) -> std::io::Result<()> {
+    pub async fn try_release_port(&self) -> std::io::Result<()> {
         let addr = SocketAddr::from(([127, 0, 0, 1], self.config.ports.local));
 
         // First check if this is our own active connection

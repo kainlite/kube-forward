@@ -44,9 +44,6 @@
   ports:
     local: 5434 
     remote: 5432   
-  options:
-    retry_interval: 5s
-    health_check_interval: 10s
 
 - name: "longhorn"
   target: "longhorn-frontend.longhorn-system"

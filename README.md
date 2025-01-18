@@ -22,7 +22,7 @@ interval), in a future release `retry_interval` and `health_check_interval` will
   ports:
     local: <any free local port> 
     remote: <remote port on the pod> 
-  options:
+  options: <optional | define it if you need to tweak the default behavior>
     retry_interval: <optional> (define it in seconds for example 5s)
     max_retries: <optional> (define it as a number for example 20)
     health_check_interval: <optional> (define it in seconds for example 10s)
@@ -40,8 +40,8 @@ Assuming we have an instance called "simple" we can easily match the pod using t
     local: 16686
     remote: 16686
   options:
-    retry_interval: 5s
-    health_check_interval: 10s
+    retry_interval: 1s
+    health_check_interval: 30s
   pod_selector:
     label: "app.kubernetes.io/instance=simple"
 
@@ -50,9 +50,6 @@ Assuming we have an instance called "simple" we can easily match the pod using t
   ports:
     local: 5434 
     remote: 5432   
-  options:
-    retry_interval: 5s
-    health_check_interval: 10s
 ```
 
 #### Full configuration example
@@ -98,9 +95,6 @@ Full configuration example for different services:
   ports:
     local: 5434 
     remote: 5432   
-  options:
-    retry_interval: 5s
-    health_check_interval: 10s
 ```
 
 ### Install instructions

@@ -6,7 +6,7 @@ pub struct ForwardConfig {
     pub name: String,
     pub target: String,
     pub ports: PortMapping,
-    #[serde(default)]
+    #[serde(default = "default_forward_options")]
     pub options: ForwardOptions,
     #[serde(default)]
     pub local_dns: LocalDnsConfig,
@@ -44,18 +44,27 @@ pub struct PodSelector {
     pub annotation: Option<String>, // e.g. "prometheus.io/scrape=true"
 }
 
-fn default_retry_interval() -> Duration {
+pub fn default_forward_options() -> ForwardOptions {
+    ForwardOptions {
+        retry_interval: default_retry_interval(),
+        max_retries: default_max_retries(),
+        persistent_connection: default_persistent_connection(),
+        health_check_interval: default_health_check_interval(),
+    }
+}
+
+pub fn default_retry_interval() -> Duration {
     Duration::from_secs(5)
 }
 
-fn default_max_retries() -> u32 {
+pub fn default_max_retries() -> u32 {
     3
 }
 
-fn default_health_check_interval() -> Duration {
+pub fn default_health_check_interval() -> Duration {
     Duration::from_secs(10)
 }
 
-fn default_persistent_connection() -> bool {
+pub fn default_persistent_connection() -> bool {
     true
 }

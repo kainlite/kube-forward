@@ -1,9 +1,13 @@
 #[cfg(test)]
 mod tests {
     use k8s_openapi::api::core::v1::Pod;
+    use k8s_openapi::api::core::v1::{PodSpec, PodStatus};
+    use k8s_openapi::apimachinery::pkg::apis::meta::v1::ObjectMeta;
     use kube_forward::config::{ForwardConfig, PodSelector};
+    use kube_forward::config::{ForwardOptions, LocalDnsConfig, PortMapping};
     use kube_forward::forward::{ForwardState, HealthCheck, PortForward};
     use kube_forward::util::ServiceInfo;
+    use std::collections::BTreeMap;
     use std::time::Duration;
     use tokio::net::TcpListener;
 
@@ -366,6 +370,196 @@ mod tests {
 
         // Since we're not in a real k8s environment, this should fail
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_matches_pod_selector_comprehensive() {
+        let config = ForwardConfig {
+            name: "test-forward".to_string(),
+            target: "test-target.test-namespace".to_string(),
+            ports: kube_forward::config::PortMapping {
+                local: 8080,
+                remote: 80,
+            },
+            local_dns: kube_forward::config::LocalDnsConfig {
+                enabled: false,
+                hostname: None,
+            },
+            pod_selector: PodSelector {
+                label: Some("app=myapp".to_string()),
+                annotation: Some("monitoring=enabled".to_string()),
+            },
+            options: kube_forward::config::ForwardOptions {
+                max_retries: 3,
+                retry_interval: Duration::from_secs(1),
+                health_check_interval: Duration::from_secs(5),
+                persistent_connection: true,
+            },
+        };
+
+        let service_info = ServiceInfo {
+            name: "test-service".to_string(),
+            namespace: "default".to_string(),
+            ports: vec![80],
+        };
+
+        let forward = PortForward::new(config, service_info);
+
+        // Test 1: Pod with matching label and annotation
+        let mut pod = Pod::default();
+        pod.metadata.labels = Some(BTreeMap::from([("app".to_string(), "myapp".to_string())]));
+        pod.metadata.annotations = Some(BTreeMap::from([(
+            "monitoring".to_string(),
+            "enabled".to_string(),
+        )]));
+
+        assert!(forward.clone().matches_pod_selector(
+            &pod,
+            &PodSelector {
+                label: Some("app=myapp".to_string()),
+                annotation: Some("monitoring=enabled".to_string()),
+            }
+        ));
+
+        // Test 2: Pod with matching label but no annotation
+        let mut pod = Pod::default();
+        pod.metadata.labels = Some(BTreeMap::from([("app".to_string(), "myapp".to_string())]));
+
+        assert!(!forward.clone().matches_pod_selector(
+            &pod,
+            &PodSelector {
+                label: Some("app=myapp".to_string()),
+                annotation: Some("monitoring=enabled".to_string()),
+            }
+        ));
+
+        // Test 3: Pod with no selectors
+        let pod = Pod::default();
+        assert!(!forward.clone().matches_pod_selector(
+            &pod,
+            &PodSelector {
+                label: None,
+                annotation: None,
+            }
+        ));
+
+        // Test 4: Pod with service name in labels but no specific selector
+        let mut pod = Pod::default();
+        pod.metadata.labels = Some(BTreeMap::from([(
+            "service".to_string(),
+            "test-service".to_string(),
+        )]));
+
+        assert!(forward.clone().matches_pod_selector(
+            &pod,
+            &PodSelector {
+                label: None,
+                annotation: None,
+            }
+        ));
+    }
+
+    #[tokio::test]
+    async fn test_get_pod_with_different_states() {
+        let client = kube::Client::try_default().await.unwrap();
+
+        // Create test pods with different states
+        let running_pod = Pod {
+            metadata: ObjectMeta {
+                name: Some("test-pod-running".to_string()),
+                namespace: Some("default".to_string()),
+                labels: Some(BTreeMap::from([("app".to_string(), "test".to_string())])),
+                ..ObjectMeta::default()
+            },
+            spec: Some(PodSpec::default()),
+            status: Some(PodStatus {
+                phase: Some("Running".to_string()),
+                ..PodStatus::default()
+            }),
+        };
+
+        let mut pending_pod = running_pod.clone();
+        pending_pod.status = Some(PodStatus {
+            phase: Some("Pending".to_string()),
+            ..PodStatus::default()
+        });
+
+        let config = ForwardConfig {
+            name: "test-forward".to_string(),
+            target: "test-target".to_string(),
+            ports: PortMapping {
+                local: 8080,
+                remote: 80,
+            },
+            pod_selector: PodSelector {
+                label: Some("app=test".to_string()),
+                annotation: None,
+            },
+            local_dns: LocalDnsConfig {
+                enabled: false,
+                hostname: None,
+            },
+            options: ForwardOptions {
+                max_retries: 3,
+                retry_interval: Duration::from_secs(1),
+                health_check_interval: Duration::from_secs(5),
+                persistent_connection: false,
+            },
+        };
+
+        let service_info = ServiceInfo {
+            name: "test-service".to_string(),
+            namespace: "default".to_string(),
+            ports: vec![80],
+        };
+
+        let forward = PortForward::new(config, service_info);
+
+        // Test get_pod behavior
+        let result = forward.get_pod(&client).await;
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_try_release_port_scenarios() {
+        let config = ForwardConfig {
+            name: "test-forward".to_string(),
+            target: "test-target".to_string(),
+            ports: PortMapping {
+                local: 0,
+                remote: 80,
+            },
+            pod_selector: PodSelector::default(),
+            local_dns: LocalDnsConfig::default(),
+            options: ForwardOptions::default(),
+        };
+
+        let service_info = ServiceInfo {
+            name: "test-service".to_string(),
+            namespace: "default".to_string(),
+            ports: vec![80],
+        };
+
+        let mut forward = PortForward::new(config, service_info);
+
+        // Test 1: Port in Connected state
+        *forward.state.write().await = ForwardState::Connected;
+        let result = forward.try_release_port().await;
+        assert!(result.is_ok());
+
+        // Test 2: Port in Starting state
+        *forward.state.write().await = ForwardState::Starting;
+        let result = forward.try_release_port().await;
+        assert!(result.is_ok());
+
+        // Test 3: Port actually in use by another process
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        forward.config.ports.local = port;
+        *forward.state.write().await = ForwardState::Disconnected;
+        let result = forward.try_release_port().await;
+        assert!(result.is_err());
+        assert!(result.unwrap_err().kind() == std::io::ErrorKind::AddrInUse);
     }
 
     #[tokio::test]

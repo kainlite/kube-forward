@@ -149,3 +149,14 @@ async fn test_max_retries_exceeded() {
         _ => panic!("Expected ConnectionError"),
     }
 }
+
+#[test]
+fn test_error_display() {
+    // Test DnsError
+    let dns_error = PortForwardError::DnsError("invalid dns".to_string());
+    assert!(dns_error.to_string().contains("invalid DNS name"));
+
+    // Test ConnectionError
+    let conn_error = PortForwardError::ConnectionError("connection failed".to_string());
+    assert!(conn_error.to_string().contains("connection error"));
+}
