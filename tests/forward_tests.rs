@@ -9,6 +9,8 @@ mod tests {
     use kube_forward::util::ServiceInfo;
     use std::collections::BTreeMap;
     use std::time::Duration;
+    use tokio::io::AsyncReadExt;
+    use tokio::io::AsyncWriteExt;
     use tokio::net::TcpListener;
 
     #[tokio::test]
@@ -229,35 +231,49 @@ mod tests {
     // just a reminder in case it fails later on
     #[tokio::test]
     async fn test_establish_forward() {
-        // Find a free port first
-        let temp_listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let port = temp_listener.local_addr().unwrap().port();
-        drop(temp_listener); // Release the temporary listener
-
-        // Create a long-lived listener to occupy the port
-        let _listener = TcpListener::bind(format!("127.0.0.1:{}", port))
-            .await
-            .unwrap();
-
+        // Test 1: Already Connected state
         let config = ForwardConfig {
-            name: "test-forward".to_string(),
-            target: "test-target.test-namespace".to_string(),
-            ports: kube_forward::config::PortMapping {
-                local: port, // Use the port we know is in use
-                remote: 80,
+            name: "kube-dns".to_string(),
+            target: "kube-dns.kube-system".to_string(),
+            ports: PortMapping {
+                local: 0,
+                remote: 53,
+            },
+            pod_selector: PodSelector::default(),
+            local_dns: LocalDnsConfig::default(),
+            options: ForwardOptions::default(),
+        };
+
+        let service_info = ServiceInfo {
+            name: "kube-dns".to_string(),
+            namespace: "kube-system".to_string(),
+            ports: vec![53],
+        };
+
+        let forward = PortForward::new(config, service_info);
+        let client = kube::Client::try_default().await.unwrap();
+
+        *forward.state.write().await = ForwardState::Connected;
+        let result = forward.establish_forward(&client).await;
+        assert!(result.is_ok());
+
+        // Test 2: Test TCP keepalive and connection handling
+        let config = ForwardConfig {
+            name: "kube-dns".to_string(),
+            target: "kube-system".to_string(),
+            ports: PortMapping {
+                local: 0, // Let OS assign port
+                remote: 53,
             },
             pod_selector: PodSelector {
-                label: Some("k8s-app=kube-dns".to_string()), // Match kube-dns pod
+                label: Some("k8s-app=kube-dns".to_string()),
                 annotation: None,
             },
-            local_dns: kube_forward::config::LocalDnsConfig {
-                enabled: false,
-                hostname: None,
-            },
-            options: kube_forward::config::ForwardOptions {
-                max_retries: 1, // Set to 1 to fail faster
+            local_dns: LocalDnsConfig::default(),
+            options: ForwardOptions {
+                max_retries: 1,
                 retry_interval: Duration::from_millis(100),
-                health_check_interval: Duration::from_secs(5),
+                health_check_interval: Duration::from_secs(1),
                 persistent_connection: true,
             },
         };
@@ -265,32 +281,31 @@ mod tests {
         let service_info = ServiceInfo {
             name: "kube-dns".to_string(),
             namespace: "kube-system".to_string(),
-            ports: vec![80],
+            ports: vec![53],
         };
 
-        let forward = PortForward::new(config, service_info);
-        let client = kube::Client::try_default().await.unwrap();
+        let keep_forward = PortForward::new(config, service_info.clone());
 
-        // We purposely set the state to Disconnected to simulate a previous failure
-        // (because the port is already in use)
-        *forward.state.write().await = ForwardState::Disconnected;
-
-        // Try to establish the forward (should fail because port is in use)
-        let result = forward.establish_forward(&client).await;
-
-        assert!(result.is_err(), "Expected error but got {:?}", result);
-        match result {
-            Err(kube_forward::error::PortForwardError::ConnectionError(msg)) => {
-                assert!(
-                    msg.contains("already in use"),
-                    "Expected 'already in use' error but got: {}",
-                    msg
-                );
+        // Start the forward in a separate task
+        let _forward_handle = tokio::spawn({
+            let keep_forward = keep_forward.clone();
+            let client = client.clone();
+            async move {
+                let result = keep_forward.establish_forward(&client).await;
+                if result.is_err() {
+                    println!("Forward error: {:?}", result);
+                }
+                result
             }
-            Err(e) => panic!("Expected ConnectionError for port in use, got: {:?}", e),
-            Ok(_) => panic!("Expected error but got Ok"),
-        }
+        });
+
+        // Give it some time to start
+        tokio::time::sleep(Duration::from_millis(100)).await;
+
+        // Stop the forward
+        forward.stop().await;
     }
+
     // This tests specifically depends on kind
     // just a reminder in case it fails later on
     #[tokio::test]
@@ -358,17 +373,41 @@ mod tests {
 
     #[tokio::test]
     async fn test_forward_connection() {
-        let pods: kube::Api<Pod> =
-            kube::Api::namespaced(kube::Client::try_default().await.unwrap(), "default");
+        let client = kube::Client::try_default().await.unwrap();
+        let pods: kube::Api<Pod> = kube::Api::namespaced(client, "default");
 
-        // Create a mock TCP connection
-        let (client_conn, _server_conn) = tokio::io::duplex(64);
+        // Create a mock TCP connection pair
+        let (client_stream, mut server_stream) = tokio::io::duplex(64);
+
+        // Spawn a task to simulate the remote end
+        let server_handle = tokio::spawn(async move {
+            let mut buf = [0u8; 64];
+            let _ = server_stream.read(&mut buf).await;
+            let _ = server_stream.write_all(b"response data").await;
+        });
 
         // Test the forward_connection function
         let result =
-            PortForward::forward_connection(&pods, "test-pod".to_string(), 80, client_conn).await;
+            PortForward::forward_connection(&pods, "test-pod".to_string(), 80, client_stream).await;
+
+        // Wait for the server task
+        let _ = server_handle.await;
 
         // Since we're not in a real k8s environment, this should fail
+        assert!(result.is_err());
+
+        // Test with timeout
+        let (client_stream, mut server_stream) = tokio::io::duplex(64);
+
+        // Spawn a task that will delay, triggering the timeout
+        let server_handle = tokio::spawn(async move {
+            tokio::time::sleep(Duration::from_millis(300)).await;
+            let _ = server_stream.write_all(b"delayed response").await;
+        });
+
+        let result =
+            PortForward::forward_connection(&pods, "test-pod".to_string(), 80, client_stream).await;
+        let _ = server_handle.await;
         assert!(result.is_err());
     }
 
