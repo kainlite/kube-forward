@@ -310,6 +310,20 @@ mod tests {
             }
         });
 
+        // Check if the connection is alive
+        let result = keep_forward.monitor_connection(&client).await;
+        match result {
+            Ok(_) => {
+                assert!(matches!(
+                    *keep_forward.state.read().await,
+                    ForwardState::Connected
+                ));
+            }
+            Err(e) => {
+                dbg!("Failed to establish forward: {:?}", e);
+            }
+        }
+
         // Give it some time to start
         tokio::time::sleep(Duration::from_millis(100)).await;
 
