@@ -13,7 +13,7 @@ mod tests {
         assert_eq!(default_retry_interval(), Duration::from_secs(5));
         assert_eq!(default_max_retries(), 3);
         assert_eq!(default_health_check_interval(), Duration::from_secs(10));
-        assert_eq!(default_persistent_connection(), true);
+        assert!(default_persistent_connection());
 
         // Test default ForwardOptions
         let default_options = default_forward_options();
@@ -35,6 +35,7 @@ mod tests {
             name: "test".to_string(),
             target: "test-service".to_string(),
             ports: PortMapping {
+                protocol: Some("TCP".to_string()),
                 local: 8080,
                 remote: 80,
             },
@@ -84,6 +85,7 @@ mod tests {
             name: "test".to_string(),
             target: "test-service".to_string(),
             ports: PortMapping {
+                protocol: Some("TCP".to_string()),
                 local: 8080,
                 remote: 80,
             },

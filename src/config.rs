@@ -16,6 +16,8 @@ pub struct ForwardConfig {
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 pub struct PortMapping {
+    #[serde(default = "default_protocol")]
+    pub protocol: Option<String>,
     pub local: u16,
     pub remote: u16,
 }
@@ -67,4 +69,8 @@ pub fn default_health_check_interval() -> Duration {
 
 pub fn default_persistent_connection() -> bool {
     true
+}
+
+pub fn default_protocol() -> Option<String> {
+    Some("TCP".to_string())
 }

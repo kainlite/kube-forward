@@ -57,3 +57,11 @@
   pod_selector:
     label: "app=longhorn-ui"
 
+- name: "coredns"
+  target: "kube-dns.kube-system"
+  ports:
+    protocol: udp
+    local: 5454 
+    remote: 53
+  pod_selector:
+    label: "k8s-app=kube-dns"

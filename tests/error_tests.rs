@@ -18,6 +18,7 @@ async fn test_port_already_in_use() {
         name: "test-forward".to_string(),
         target: "test-target".to_string(),
         ports: PortMapping {
+            protocol: Some("TCP".to_string()),
             local: bound_port,
             remote: 80,
         },
@@ -65,6 +66,7 @@ async fn test_invalid_pod_selector() {
         name: "test-forward".to_string(),
         target: "test-target".to_string(),
         ports: PortMapping {
+            protocol: Some("TCP".to_string()),
             local: 8080,
             remote: 80,
         },
@@ -111,6 +113,7 @@ async fn test_max_retries_exceeded() {
         name: "test-forward".to_string(),
         target: "test-target".to_string(),
         ports: PortMapping {
+            protocol: Some("TCP".to_string()),
             local: 8080,
             remote: 80,
         },

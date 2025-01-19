@@ -11,6 +11,7 @@ async fn create_test_config(name: &str, local_port: u16, remote_port: u16) -> Fo
         name: name.to_string(),
         target: format!("{}.test-namespace", name),
         ports: PortMapping {
+            protocol: Some("TCP".to_string()),
             local: local_port,
             remote: remote_port,
         },

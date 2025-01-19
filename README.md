@@ -20,6 +20,7 @@ interval), in a future release `retry_interval` and `health_check_interval` will
 - name: "identifier"
   target: "<svc-name>.<namespace>"
   ports:
+    protocol: <optional | tcp or udp, tcp is the default if not configured>
     local: <any free local port> 
     remote: <remote port on the pod> 
   options: <optional | define it if you need to tweak the default behavior>
@@ -50,6 +51,26 @@ Assuming we have an instance called "simple" we can easily match the pod using t
   ports:
     local: 5434 
     remote: 5432   
+
+- name: "coredns"
+  target: "kube-dns.kube-system"
+  ports:
+    protocol: udp
+    local: 5454 
+    remote: 53
+  pod_selector:
+    label: "k8s-app=kube-dns"
+```
+
+To test it you can do:
+```bash
+❯ dog google.com @127.0.0.1:5454
+A google.com. 30s   172.253.122.139
+A google.com. 30s   172.253.122.102
+A google.com. 30s   172.253.122.101
+A google.com. 30s   172.253.122.113
+A google.com. 30s   172.253.122.100
+A google.com. 30s   172.253.122.138
 ```
 
 #### Full configuration example
@@ -95,6 +116,15 @@ Full configuration example for different services:
   ports:
     local: 5434 
     remote: 5432   
+
+- name: "coredns"
+  target: "kube-dns.kube-system"
+  ports:
+    protocol: udp
+    local: 5454 
+    remote: 53
+  pod_selector:
+    label: "k8s-app=kube-dns"
 ```
 
 ### Install instructions

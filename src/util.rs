@@ -16,7 +16,7 @@ pub async fn resolve_service(client: Client, target: &str) -> Result<ServiceInfo
     // Fix the temporary value issue by getting the namespace first
     let default_ns = client.default_namespace();
     let (service_name, namespace) = match parts.len() {
-        1 => (parts[0], default_ns.as_ref()),
+        1 => (parts[0], default_ns),
         2 => (parts[0], parts[1]),
         _ => parse_full_dns_name(&parts)?,
     };
@@ -26,7 +26,7 @@ pub async fn resolve_service(client: Client, target: &str) -> Result<ServiceInfo
     let service = services
         .get(service_name)
         .await
-        .map_err(|e| PortForwardError::KubeError(e))?;
+        .map_err(PortForwardError::KubeError)?;
 
     let ports = service
         .spec

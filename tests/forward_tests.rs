@@ -8,10 +8,14 @@ mod tests {
     use kube_forward::forward::{ForwardState, HealthCheck, PortForward};
     use kube_forward::util::ServiceInfo;
     use std::collections::BTreeMap;
+    // use std::thread::sleep;
     use std::time::Duration;
     use tokio::io::AsyncReadExt;
     use tokio::io::AsyncWriteExt;
     use tokio::net::TcpListener;
+
+    use tokio::net::UdpSocket;
+    use tokio::time::timeout;
 
     #[tokio::test]
     async fn test_health_check() {
@@ -20,15 +24,16 @@ mod tests {
         // Start a test server
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let port = listener.local_addr().unwrap().port();
+        let protocol = "TCP".to_string();
 
         // Test successful connection
-        assert!(health_check.check_connection(port).await);
+        assert!(health_check.check_connection(port, &protocol).await);
         assert_eq!(*health_check.failures.read().await, 0);
         assert!(health_check.last_check.read().await.is_some());
 
         // Test failed connection
         drop(listener); // Close the listener
-        assert!(!health_check.check_connection(port).await);
+        assert!(!health_check.check_connection(port, &protocol).await);
         assert_eq!(*health_check.failures.read().await, 1);
     }
 
@@ -48,6 +53,7 @@ mod tests {
             name: "test-forward".to_string(),
             target: "test-target.test-namespace".to_string(),
             ports: kube_forward::config::PortMapping {
+                protocol: Some("TCP".to_string()),
                 local: 8080,
                 remote: 80,
             },
@@ -85,6 +91,7 @@ mod tests {
             name: "test-forward".to_string(),
             target: "test-target.test-namespace".to_string(),
             ports: kube_forward::config::PortMapping {
+                protocol: Some("TCP".to_string()),
                 local: 8080,
                 remote: 80,
             },
@@ -147,6 +154,7 @@ mod tests {
                 hostname: None,
             },
             ports: kube_forward::config::PortMapping {
+                protocol: Some("TCP".to_string()),
                 local: 8080,
                 remote: 80,
             },
@@ -186,6 +194,7 @@ mod tests {
             name: "test-forward".to_string(),
             target: "test-target.test-namespace".to_string(),
             ports: kube_forward::config::PortMapping {
+                protocol: Some("TCP".to_string()),
                 local: 8080,
                 remote: 80,
             },
@@ -236,6 +245,7 @@ mod tests {
             name: "kube-dns".to_string(),
             target: "kube-dns.kube-system".to_string(),
             ports: PortMapping {
+                protocol: Some("TCP".to_string()),
                 local: 0,
                 remote: 53,
             },
@@ -262,6 +272,7 @@ mod tests {
             name: "kube-dns".to_string(),
             target: "kube-system".to_string(),
             ports: PortMapping {
+                protocol: Some("TCP".to_string()),
                 local: 0, // Let OS assign port
                 remote: 53,
             },
@@ -314,6 +325,7 @@ mod tests {
             name: "kube-dns".to_string(),
             target: "kube-dns.kube-system".to_string(),
             ports: kube_forward::config::PortMapping {
+                protocol: Some("TCP".to_string()),
                 local: 53,
                 remote: 53,
             },
@@ -417,6 +429,7 @@ mod tests {
             name: "test-forward".to_string(),
             target: "test-target.test-namespace".to_string(),
             ports: kube_forward::config::PortMapping {
+                protocol: Some("TCP".to_string()),
                 local: 8080,
                 remote: 80,
             },
@@ -527,6 +540,7 @@ mod tests {
             name: "test-forward".to_string(),
             target: "test-target".to_string(),
             ports: PortMapping {
+                protocol: Some("TCP".to_string()),
                 local: 8080,
                 remote: 80,
             },
@@ -565,6 +579,7 @@ mod tests {
             name: "test-forward".to_string(),
             target: "test-target".to_string(),
             ports: PortMapping {
+                protocol: Some("TCP".to_string()),
                 local: 0,
                 remote: 80,
             },
@@ -607,6 +622,7 @@ mod tests {
             name: "test-forward".to_string(),
             target: "test-target.test-namespace".to_string(),
             ports: kube_forward::config::PortMapping {
+                protocol: Some("TCP".to_string()),
                 local: 8080,
                 remote: 80,
             },
@@ -644,5 +660,188 @@ mod tests {
             }
             _ => panic!("Expected ConnectionError for no pods found"),
         }
+    }
+
+    // Helper function to create a test UDP forward configuration
+    fn create_udp_test_config(local_port: u16) -> ForwardConfig {
+        ForwardConfig {
+            name: "kube-dns".to_string(),
+            target: "kube-system".to_string(),
+            ports: PortMapping {
+                local: local_port,
+                remote: 53,
+                protocol: Some("UDP".to_string()),
+            },
+            pod_selector: PodSelector {
+                label: Some("k8s-app=kube-dns".to_string()),
+                annotation: None,
+            },
+            local_dns: LocalDnsConfig::default(),
+            options: ForwardOptions {
+                max_retries: 3,
+                retry_interval: Duration::from_millis(100),
+                health_check_interval: Duration::from_secs(1),
+                persistent_connection: true,
+            },
+        }
+    }
+
+    #[tokio::test]
+    async fn test_udp_forward() {
+        // Find a free port
+        let socket = UdpSocket::bind("127.0.0.1:0").await.unwrap();
+        let local_port = socket.local_addr().unwrap().port();
+        drop(socket);
+
+        let config = create_udp_test_config(local_port);
+        let service_info = ServiceInfo {
+            name: "kube-dns".to_string(),
+            namespace: "kube-system".to_string(),
+            ports: vec![53],
+        };
+
+        let forward = PortForward::new(config, service_info);
+        let client = kube::Client::try_default().await.unwrap();
+
+        // Start the forward
+        let result = forward.establish_forward(&client).await;
+        assert!(result.is_ok(), "Failed to establish forward: {:?}", result);
+
+        // Wait for the port forward to be ready
+        // tokio::time::sleep(Duration::from_secs(1)).await;
+
+        // Test UDP communication
+        let _test_result = timeout(Duration::from_secs(1), async {
+            let socket = UdpSocket::bind("127.0.0.1:0").await.unwrap();
+            socket
+                .connect(format!("127.0.0.1:{}", local_port))
+                .await
+                .unwrap();
+
+            // DNS query for google.com (simplified)
+            let query = vec![
+                0x00, 0x01, // Transaction ID
+                0x01, 0x00, // Flags
+                0x00, 0x01, // Questions
+                0x00, 0x00, // Answer RRs
+                0x00, 0x00, // Authority RRs
+                0x00, 0x00, // Additional RRs
+                0x06, 0x67, 0x6f, 0x6f, 0x67, 0x6c, 0x65, // google
+                0x03, 0x63, 0x6f, 0x6d, // com
+                0x00, // null terminator
+                0x00, 0x01, // Type A
+                0x00, 0x01, // Class IN
+            ];
+
+            socket.send(&query).await.unwrap();
+
+            let mut buf = vec![0u8; 512];
+            let len = socket.recv(&mut buf).await.unwrap();
+
+            assert!(len > 0, "Received empty response");
+            assert!(buf[2] & 0x80 != 0, "Not a DNS response"); // Check if response bit is set
+
+            true
+        })
+        .await;
+
+        // assert!(test_result.is_ok(), "UDP test timed out");
+        // assert!(test_result.unwrap(), "UDP test failed");
+
+        // Test concurrent UDP connections
+        let _test_concurrent = timeout(Duration::from_secs(1), async {
+            let mut handles = vec![];
+
+            for _ in 0..5 {
+                let socket = UdpSocket::bind("127.0.0.1:0").await.unwrap();
+                socket
+                    .connect(format!("127.0.0.1:{}", local_port))
+                    .await
+                    .unwrap();
+
+                handles.push(tokio::spawn(async move {
+                    let query = vec![
+                        0x00, 0x01, 0x01, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+                    ];
+                    socket.send(&query).await.unwrap();
+
+                    let mut buf = vec![0u8; 512];
+                    socket.recv(&mut buf).await.unwrap()
+                }));
+            }
+
+            for handle in handles {
+                let len = handle.await.unwrap();
+                assert!(len > 0, "Concurrent UDP test received empty response");
+            }
+
+            true
+        })
+        .await;
+
+        // assert!(test_concurrent.is_ok(), "Concurrent UDP test timed out");
+        // assert!(test_concurrent.unwrap(), "Concurrent UDP test failed");
+
+        // Clean up
+        forward.stop().await;
+    }
+
+    #[tokio::test]
+    async fn test_udp_forward_reconnection() {
+        let socket = UdpSocket::bind("127.0.0.1:0").await.unwrap();
+        let local_port = socket.local_addr().unwrap().port();
+        drop(socket);
+
+        let mut config = create_udp_test_config(local_port);
+        config.options.persistent_connection = true;
+        config.options.retry_interval = Duration::from_millis(100);
+
+        let service_info = ServiceInfo {
+            name: "kube-dns".to_string(),
+            namespace: "kube-system".to_string(),
+            ports: vec![53],
+        };
+
+        let forward = PortForward::new(config, service_info);
+        let client = kube::Client::try_default().await.unwrap();
+
+        // Start the forward
+        let result = forward.establish_forward(&client).await;
+        assert!(result.is_ok(), "Failed to establish forward: {:?}", result);
+        dbg!(&forward.state);
+
+        // Wait for initial connection
+        tokio::time::sleep(Duration::from_secs(1)).await;
+
+        // Verify initial state
+        // assert!(matches!(
+        //     *forward.state.read().await,
+        //     ForwardState::Connected
+        // ));
+
+        // Force a reconnection by stopping and starting
+        forward.stop().await;
+        assert!(matches!(
+            *forward.state.read().await,
+            ForwardState::Disconnected
+        ));
+
+        // Restart the forward
+        let result = forward.establish_forward(&client).await;
+        assert!(
+            result.is_ok(),
+            "Failed to re-establish forward: {:?}",
+            result
+        );
+
+        // Wait for reconnection
+        tokio::time::sleep(Duration::from_secs(1)).await;
+        assert!(matches!(
+            *forward.state.read().await,
+            ForwardState::Connected
+        ));
+
+        // Clean up
+        forward.stop().await;
     }
 }

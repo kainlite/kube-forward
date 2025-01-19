@@ -1,4 +1,6 @@
 use socket2::{SockRef, TcpKeepalive};
+use tokio::io::AsyncReadExt;
+use tokio::io::AsyncWriteExt;
 
 use kube::{api::Api, Client};
 
@@ -33,6 +35,12 @@ pub struct HealthCheck {
     pub failures: Arc<RwLock<u32>>,
 }
 
+impl Default for HealthCheck {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl HealthCheck {
     pub fn new() -> Self {
         Self {
@@ -41,19 +49,84 @@ impl HealthCheck {
         }
     }
 
-    pub async fn check_connection(&self, local_port: u16) -> bool {
-        use tokio::net::TcpStream;
+    pub async fn check_connection(&self, local_port: u16, protocol: &str) -> bool {
+        match protocol.to_uppercase().as_str() {
+            "UDP" => {
+                // For UDP, try to send a test packet and verify we can't bind to the port
+                use tokio::net::UdpSocket;
 
-        match TcpStream::connect(format!("127.0.0.1:{}", local_port)).await {
-            Ok(_) => {
-                *self.failures.write().await = 0;
-                *self.last_check.write().await = Some(Utc::now());
-                true
+                // Try to create a temporary socket for sending test packet
+                match UdpSocket::bind("127.0.0.1:0").await {
+                    Ok(test_socket) => {
+                        // Try to connect to the forwarded port
+                        if test_socket
+                            .connect(format!("127.0.0.1:{}", local_port))
+                            .await
+                            .is_ok()
+                        {
+                            // Send a test packet (DNS query format)
+                            let test_packet = vec![
+                                0x00, 0x01, // Transaction ID
+                                0x01, 0x00, // Flags
+                                0x00, 0x01, // Questions
+                                0x00, 0x00, // Answer RRs
+                                0x00, 0x00, // Authority RRs
+                                0x00, 0x00, // Additional RRs
+                            ];
+
+                            match test_socket.send(&test_packet).await {
+                                Ok(_) => {
+                                    // Now verify we can't bind to the forwarded port
+                                    match UdpSocket::bind(format!("127.0.0.1:{}", local_port)).await
+                                    {
+                                        Ok(_) => {
+                                            // If we can bind, the forward is not active
+                                            let mut failures = self.failures.write().await;
+                                            *failures += 1;
+                                            false
+                                        }
+                                        Err(_) => {
+                                            // If we can't bind, the forward is active
+                                            *self.failures.write().await = 0;
+                                            *self.last_check.write().await = Some(Utc::now());
+                                            true
+                                        }
+                                    }
+                                }
+                                Err(_) => {
+                                    let mut failures = self.failures.write().await;
+                                    *failures += 1;
+                                    false
+                                }
+                            }
+                        } else {
+                            let mut failures = self.failures.write().await;
+                            *failures += 1;
+                            false
+                        }
+                    }
+                    Err(_) => {
+                        let mut failures = self.failures.write().await;
+                        *failures += 1;
+                        false
+                    }
+                }
             }
-            Err(_) => {
-                let mut failures = self.failures.write().await;
-                *failures += 1;
-                false
+            _ => {
+                // Default TCP check
+                use tokio::net::TcpStream;
+                match TcpStream::connect(format!("127.0.0.1:{}", local_port)).await {
+                    Ok(_) => {
+                        *self.failures.write().await = 0;
+                        *self.last_check.write().await = Some(Utc::now());
+                        true
+                    }
+                    Err(_) => {
+                        let mut failures = self.failures.write().await;
+                        *failures += 1;
+                        false
+                    }
+                }
             }
         }
     }
@@ -145,7 +218,17 @@ impl PortForward {
         let health_check = HealthCheck::new();
         let mut interval = tokio::time::interval(self.config.options.health_check_interval);
         let mut consecutive_failures = 0;
-        let max_failures = 3; // Allow a few failures before declaring connection lost
+        let protocol = self
+            .config
+            .ports
+            .protocol
+            .clone()
+            .unwrap_or_else(|| "TCP".to_string());
+        let max_failures = if protocol.to_uppercase() == "UDP" {
+            5
+        } else {
+            3
+        }; // More lenient with UDP
 
         // Add initial delay to allow the connection to fully establish
         tokio::time::sleep(std::time::Duration::from_secs(2)).await;
@@ -163,7 +246,18 @@ impl PortForward {
         let mut initial_attempts = 0;
         let max_initial_attempts = 3;
         while initial_attempts < max_initial_attempts {
-            if health_check.check_connection(self.config.ports.local).await {
+            if health_check
+                .check_connection(
+                    self.config.ports.local,
+                    &self
+                        .config
+                        .ports
+                        .protocol
+                        .clone()
+                        .expect("Protocol configuration"),
+                )
+                .await
+            {
                 debug!("Initial health check passed for {}", self.config.name);
                 break;
             }
@@ -187,7 +281,16 @@ impl PortForward {
             interval.tick().await;
 
             // Check TCP connection
-            if !health_check.check_connection(self.config.ports.local).await {
+            let protocol = self
+                .config
+                .ports
+                .protocol
+                .clone()
+                .unwrap_or_else(|| "TCP".to_string());
+            if !health_check
+                .check_connection(self.config.ports.local, &protocol)
+                .await
+            {
                 consecutive_failures += 1;
                 if consecutive_failures > 1 {
                     warn!(
@@ -251,7 +354,7 @@ impl PortForward {
         })?;
 
         // Create Api instance for the namespace
-        let pods: Api<Pod> = Api::namespaced(client.clone(), &self.service_info.namespace);
+        let _pods: Api<Pod> = Api::namespaced(client.clone(), &self.service_info.namespace);
 
         // Try to bind to the port with retries
         let mut retry_count = 0;
@@ -264,106 +367,84 @@ impl PortForward {
             self.config.ports.local
         );
 
-        let listener = loop {
-            let addr = SocketAddr::from(([127, 0, 0, 1], self.config.ports.local));
-            match TcpListener::bind(addr).await {
-                Ok(listener) => break listener,
-                Err(e) if e.kind() == std::io::ErrorKind::AddrInUse => {
-                    if retry_count >= max_bind_retries {
-                        self.metrics.record_connection_failure();
-                        return Err(PortForwardError::ConnectionError(format!(
+        // Create listener based on protocol
+        let protocol = self
+            .config
+            .ports
+            .protocol
+            .clone()
+            .unwrap_or_else(|| "TCP".to_string());
+        debug!(
+            "Creating {} listener for the local port: {}",
+            protocol, self.config.ports.local
+        );
+
+        let addr = SocketAddr::from(([127, 0, 0, 1], self.config.ports.local));
+
+        match protocol.to_uppercase().as_str() {
+            "TCP" => {
+                let listener = loop {
+                    match TcpListener::bind(addr).await {
+                        Ok(listener) => break listener,
+                        Err(e) if e.kind() == std::io::ErrorKind::AddrInUse => {
+                            if retry_count >= max_bind_retries {
+                                self.metrics.record_connection_failure();
+                                return Err(PortForwardError::ConnectionError(format!(
                             "Port {} is already in use. Please choose a different local port",
                             self.config.ports.local
                         )));
+                            }
+                            // Try to forcefully release the port
+                            if let Err(release_err) = self.try_release_port().await {
+                                warn!(
+                                    "Failed to release port {}: {}",
+                                    self.config.ports.local, release_err
+                                );
+                            }
+                            retry_count += 1;
+                            debug!(
+                                "Port {} in use, retrying in {:?}...",
+                                self.config.ports.local, bind_retry_delay
+                            );
+                            tokio::time::sleep(bind_retry_delay).await;
+                            continue;
+                        }
+                        Err(e) => {
+                            self.metrics.record_connection_failure();
+                            return Err(PortForwardError::ConnectionError(format!(
+                                "Failed to bind to port: {}",
+                                e
+                            )));
+                        }
                     }
-                    // Try to forcefully release the port
-                    if let Err(release_err) = self.try_release_port().await {
-                        warn!(
-                            "Failed to release port {}: {}",
-                            self.config.ports.local, release_err
-                        );
-                    }
-                    retry_count += 1;
-                    debug!(
-                        "Port {} in use, retrying in {:?}...",
-                        self.config.ports.local, bind_retry_delay
-                    );
-                    tokio::time::sleep(bind_retry_delay).await;
-                    continue;
-                }
-                Err(e) => {
-                    self.metrics.record_connection_failure();
-                    return Err(PortForwardError::ConnectionError(format!(
-                        "Failed to bind to port: {}",
-                        e
-                    )));
-                }
+                };
+
+                // Set TCP keepalive
+                let ka = TcpKeepalive::new().with_time(std::time::Duration::from_secs(30));
+                let sf = SockRef::from(&listener);
+                let _ = sf.set_tcp_keepalive(&ka);
+
+                self.handle_tcp_forward(client, pod_name, listener).await?;
+            }
+            "UDP" => {
+                let socket = tokio::net::UdpSocket::bind(addr).await.map_err(|e| {
+                    PortForwardError::ConnectionError(format!("Failed to bind UDP socket: {}", e))
+                })?;
+
+                self.handle_udp_forward(client, pod_name, socket).await?;
+            }
+            _ => {
+                return Err(PortForwardError::ConnectionError(format!(
+                    "Unsupported protocol: {}",
+                    protocol
+                )));
             }
         };
-
-        // Set TCP keepalive
-        // let tcp = TcpStream::connect(&addr).await?;
-        let ka = TcpKeepalive::new().with_time(std::time::Duration::from_secs(30));
-        let sf = SockRef::from(&listener);
-        let _ = sf.set_tcp_keepalive(&ka);
 
         // Set state to connected
         *self.state.write().await = ForwardState::Connected;
         self.metrics.record_connection_success();
         self.metrics.set_connection_status(true);
-
-        // Clone values needed for the async task
-        let state = self.state.clone();
-        let name = self.config.name.clone();
-        let remote_port = self.config.ports.remote;
-        let mut shutdown = self.shutdown.subscribe();
-        let metrics = self.metrics.clone(); // Clone metrics for the task
-
-        // Spawn the main forwarding task
-        tokio::spawn(async move {
-            let mut listener_stream = TcpListenerStream::new(listener);
-            let name = name.as_str(); // Use as_str() to get a &str we can copy
-
-            loop {
-                tokio::select! {
-                    // Handle new connections
-                    Ok(Some(client_conn)) = listener_stream.try_next() => {
-                        if let Ok(peer_addr) = client_conn.peer_addr() {
-                            info!(%peer_addr, "New connection for {}", name);
-                            metrics.record_connection_attempt();
-                        }
-                        let pods = pods.clone();
-                        let pod_name = pod_name.clone();
-                        let metrics = metrics.clone(); // Clone metrics for the connection task
-
-                        tokio::spawn(async move {
-                            if let Err(e) = Self::forward_connection(&pods, pod_name, remote_port, client_conn).await {
-                                error!("Failed to forward connection: {}", e);
-                                metrics.record_connection_failure();
-                            } else {
-                                metrics.record_connection_success();
-                            }
-                        });
-                    }
-
-                    // Handle shutdown signal
-                    _ = shutdown.recv() => {
-                        info!("Received shutdown signal for {}", name);
-                        *state.write().await = ForwardState::Disconnected;
-                        metrics.set_connection_status(false);
-                        break;
-                    }
-
-                    else => {
-                        error!("Port forward {} listener closed", name);
-                        *state.write().await = ForwardState::Failed("Listener closed unexpectedly".to_string());
-                        metrics.set_connection_status(false);
-                        metrics.record_connection_failure();
-                        break;
-                    }
-                }
-            }
-        });
 
         Ok(())
     }
@@ -422,6 +503,176 @@ impl PortForward {
         Ok(())
     }
 
+    async fn handle_udp_forward(
+        &self,
+        client: &Client,
+        pod_name: String,
+        socket: tokio::net::UdpSocket,
+    ) -> Result<()> {
+        let state = self.state.clone();
+        let name = self.config.name.clone();
+        let remote_port = self.config.ports.remote;
+        let mut shutdown = self.shutdown.subscribe();
+        let metrics = self.metrics.clone();
+        let pods: Api<Pod> = Api::namespaced(client.clone(), &self.service_info.namespace);
+
+        tokio::spawn(async move {
+            let mut buf = vec![0u8; 65535]; // Max UDP packet size
+            let socket = Arc::new(socket);
+
+            loop {
+                tokio::select! {
+                    result = socket.recv_from(&mut buf) => {
+                        match result {
+                            Ok((len, peer)) => {
+                                let pods = pods.clone();
+                                let pod_name = pod_name.clone();
+                                let metrics = metrics.clone();
+                                let socket = socket.clone();
+                                let data = buf[..len].to_vec();
+
+                                tokio::spawn(async move {
+                                    if let Err(e) = Self::handle_udp_packet(&pods, pod_name, remote_port, socket, data, peer).await {
+                                        error!("Failed to forward UDP packet: {}", e);
+                                        metrics.record_connection_failure();
+                                    } else {
+                                        metrics.record_connection_success();
+                                    }
+                                });
+                            }
+                            Err(e) => {
+                                error!("UDP receive error: {}", e);
+                                metrics.record_connection_failure();
+                                break;
+                            }
+                        }
+                    }
+                    _ = shutdown.recv() => {
+                        info!("Received shutdown signal for UDP forward {}", name);
+                        *state.write().await = ForwardState::Disconnected;
+                        metrics.set_connection_status(false);
+                        break;
+                    }
+                }
+            }
+        });
+
+        Ok(())
+    }
+
+    async fn handle_udp_packet(
+        pods: &Api<Pod>,
+        pod_name: String,
+        port: u16,
+        socket: Arc<tokio::net::UdpSocket>,
+        data: Vec<u8>,
+        peer: SocketAddr,
+    ) -> anyhow::Result<()> {
+        // Create port forward
+        let mut pf = pods
+            .portforward(&pod_name, &[port])
+            .await
+            .map_err(|e| anyhow::anyhow!("Failed to create UDP portforward: {}", e))?;
+
+        // Get the stream for our port
+        let mut upstream_conn = pf.take_stream(port).ok_or_else(|| {
+            anyhow::anyhow!("Failed to get UDP port forward stream for port {}", port)
+        })?;
+
+        // Send the data length as a u16 in network byte order (big-endian)
+        let len_bytes = (data.len() as u16).to_be_bytes();
+        upstream_conn.write_all(&len_bytes).await?;
+
+        // Send the actual data
+        upstream_conn.write_all(&data).await?;
+        upstream_conn.flush().await?;
+
+        // Read response length
+        let mut len_buf = [0u8; 2];
+        match upstream_conn.read_exact(&mut len_buf).await {
+            Ok(_) => {
+                let response_length = u16::from_be_bytes(len_buf) as usize;
+
+                // Read response data
+                let mut response = vec![0u8; response_length];
+                match upstream_conn.read_exact(&mut response).await {
+                    Ok(_) => {
+                        // Send response back to client
+                        socket.send_to(&response, peer).await?;
+                    }
+                    Err(e) if e.kind() == std::io::ErrorKind::UnexpectedEof => {
+                        // If we get EOF here, it might be a response without data
+                        debug!("No response data received from upstream");
+                    }
+                    Err(e) => return Err(e.into()),
+                }
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::UnexpectedEof => {
+                // If we get EOF here, the connection was closed normally
+                debug!("Connection closed by upstream after sending data");
+            }
+            Err(e) => return Err(e.into()),
+        }
+
+        Ok(())
+    }
+
+    async fn handle_tcp_forward(
+        &self,
+        client: &Client,
+        pod_name: String,
+        listener: TcpListener,
+    ) -> Result<()> {
+        let state = self.state.clone();
+        let name = self.config.name.clone();
+        let remote_port = self.config.ports.remote;
+        let mut shutdown = self.shutdown.subscribe();
+        let metrics = self.metrics.clone();
+        let pods: Api<Pod> = Api::namespaced(client.clone(), &self.service_info.namespace);
+
+        tokio::spawn(async move {
+            let mut listener_stream = TcpListenerStream::new(listener);
+
+            loop {
+                tokio::select! {
+                    Ok(Some(client_conn)) = listener_stream.try_next() => {
+                        if let Ok(peer_addr) = client_conn.peer_addr() {
+                            info!(%peer_addr, "New TCP connection for {}", name);
+                            metrics.record_connection_attempt();
+                        }
+                        let pods = pods.clone();
+                        let pod_name = pod_name.clone();
+                        let metrics = metrics.clone();
+
+                        tokio::spawn(async move {
+                            if let Err(e) = Self::forward_connection(&pods, pod_name, remote_port, client_conn).await {
+                                error!("Failed to forward TCP connection: {}", e);
+                                metrics.record_connection_failure();
+                            } else {
+                                metrics.record_connection_success();
+                            }
+                        });
+                    }
+                    _ = shutdown.recv() => {
+                        info!("Received shutdown signal for TCP forward {}", name);
+                        *state.write().await = ForwardState::Disconnected;
+                        metrics.set_connection_status(false);
+                        break;
+                    }
+                    else => {
+                        error!("Port forward {} listener closed", name);
+                        *state.write().await = ForwardState::Failed("Listener closed unexpectedly".to_string());
+                        metrics.set_connection_status(false);
+                        metrics.record_connection_failure();
+                        break;
+                    }
+                }
+            }
+        });
+
+        Ok(())
+    }
+
     pub async fn get_pod(&self, client: &Client) -> Result<Pod> {
         let pods: Api<Pod> = Api::namespaced(client.clone(), &self.service_info.namespace);
 
@@ -429,7 +680,7 @@ impl PortForward {
         let pod_list = pods
             .list(&kube::api::ListParams::default())
             .await
-            .map_err(|e| PortForwardError::KubeError(e))?;
+            .map_err(PortForwardError::KubeError)?;
 
         for pod in pod_list.items {
             if self
@@ -455,17 +706,22 @@ impl PortForward {
     pub fn matches_pod_selector(self, pod: &Pod, selector: &PodSelector) -> bool {
         // If no selector is specified, fall back to checking if service name is in any label
         if selector.label.is_none() && selector.annotation.is_none() {
-            return pod.metadata.labels.as_ref().map_or(false, |labels| {
-                labels.values().any(|v| v == &self.service_info.name)
-            });
+            return pod
+                .metadata
+                .labels
+                .as_ref()
+                .is_some_and(|labels| labels.values().any(|v| v == &self.service_info.name));
         }
 
         // Check label if specified
         if let Some(label_selector) = &selector.label {
             let (key, value) = self.clone().parse_selector(label_selector);
-            if !pod.metadata.labels.as_ref().map_or(false, |labels| {
-                labels.get(key).map_or(false, |v| v == value)
-            }) {
+            if pod
+                .metadata
+                .labels
+                .as_ref()
+                .is_none_or(|labels| labels.get(key).is_none_or(|v| v != value))
+            {
                 return false;
             }
         }
@@ -473,13 +729,11 @@ impl PortForward {
         // Check annotation if specified
         if let Some(annotation_selector) = &selector.annotation {
             let (key, value) = self.clone().parse_selector(annotation_selector);
-            if !pod
+            if pod
                 .metadata
                 .annotations
                 .as_ref()
-                .map_or(false, |annotations| {
-                    annotations.get(key).map_or(false, |v| v == value)
-                })
+                .is_none_or(|annotations| annotations.get(key).is_none_or(|v| v != value))
             {
                 return false;
             }
