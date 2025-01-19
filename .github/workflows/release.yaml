@@ -69,10 +69,32 @@ jobs:
           override: true
 
       - name: Patch binary version
-        run: | 
-          echo "Releasing for tag name: $GITHUB_REF_NAME"
-          STRIPPED_VERSION=$(echo $GITHUB_REF_NAME | sed 's/v//')
-          sed -i "3s/version.*=.*$/version = \"$STRIPPED_VERSION\"/" Cargo.toml
+        shell: python
+        run: |
+          import os
+          import re
+          
+          # Get version from tag
+          tag = os.environ['GITHUB_REF_NAME']
+          version = tag.lstrip('v')
+          
+          # Read Cargo.toml
+          with open('Cargo.toml', 'r') as f:
+              content = f.read()
+          
+          # Replace version line
+          new_content = re.sub(
+              r'^version\s*=\s*"[^"]*"',
+              f'version = "{version}"',
+              content,
+              flags=re.MULTILINE
+          )
+          
+          # Write back
+          with open('Cargo.toml', 'w') as f:
+              f.write(new_content)
+          
+          print(f"Updated version to {version}")
 
       - name: Install cross-compilation dependencies
         if: matrix.target == 'aarch64-unknown-linux-gnu'
