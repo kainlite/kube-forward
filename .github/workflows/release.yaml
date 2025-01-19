@@ -13,7 +13,10 @@ permissions:
   contents: write
 
 jobs:
+  tests:
+    uses: ./github/workflows/tests.yaml
   create-release:
+    needs: [tests]
     runs-on: ubuntu-latest
     outputs:
       upload_url: ${{ steps.create_release.outputs.upload_url }}
@@ -63,6 +66,10 @@ jobs:
           toolchain: stable
           target: ${{ matrix.target }}
           override: true
+
+      - name: Path binary version
+        run: | 
+          sed -i "3s/version.*=.*$/version = \"${github.event.release.tag_name}\"/" Cargo.toml
 
       - name: Install cross-compilation dependencies
         if: matrix.target == 'aarch64-unknown-linux-gnu'
