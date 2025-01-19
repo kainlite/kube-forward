@@ -71,7 +71,8 @@ jobs:
       - name: Patch binary version
         run: | 
           echo "Releasing for tag name: $GITHUB_REF_NAME"
-          sed -i "3s/version.*=.*$/version = \"${{github.ref_name}}\"/" Cargo.toml
+          STRIPPED_VERSION=$(echo $GITHUB_REF_NAME | sed 's/v//')
+          sed -i "3s/version.*=.*$/version = \"$STRIPPED_VERSION\"/" Cargo.toml
 
       - name: Install cross-compilation dependencies
         if: matrix.target == 'aarch64-unknown-linux-gnu'
