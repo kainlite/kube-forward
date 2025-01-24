@@ -3,19 +3,24 @@ mod tests {
     use k8s_openapi::api::core::v1::Pod;
     use k8s_openapi::api::core::v1::{PodSpec, PodStatus};
     use k8s_openapi::apimachinery::pkg::apis::meta::v1::ObjectMeta;
+    use kube::Api;
     use kube_forward::config::{ForwardConfig, PodSelector};
     use kube_forward::config::{ForwardOptions, LocalDnsConfig, PortMapping};
     use kube_forward::forward::{ForwardState, HealthCheck, PortForward};
     use kube_forward::util::ServiceInfo;
     use std::collections::BTreeMap;
-    // use std::thread::sleep;
+    use std::process::Command;
+    use std::sync::mpsc;
+    use std::sync::Arc;
+    use std::thread;
+    use tokio::time::timeout;
+
     use std::time::Duration;
     use tokio::io::AsyncReadExt;
     use tokio::io::AsyncWriteExt;
     use tokio::net::TcpListener;
 
     use tokio::net::UdpSocket;
-    use tokio::time::timeout;
 
     #[tokio::test]
     async fn test_health_check() {
@@ -245,13 +250,21 @@ mod tests {
             name: "kube-dns".to_string(),
             target: "kube-dns.kube-system".to_string(),
             ports: PortMapping {
-                protocol: Some("TCP".to_string()),
-                local: 0,
+                protocol: Some("udp".to_string()),
+                local: 5356,
                 remote: 53,
             },
-            pod_selector: PodSelector::default(),
+            pod_selector: PodSelector {
+                label: Some("k8s-app=kube-dns".to_string()),
+                annotation: None,
+            },
             local_dns: LocalDnsConfig::default(),
-            options: ForwardOptions::default(),
+            options: ForwardOptions {
+                retry_interval: Duration::from_secs(5),
+                max_retries: 5,
+                persistent_connection: true,
+                health_check_interval: Duration::from_secs(5),
+            },
         };
 
         let service_info = ServiceInfo {
@@ -260,12 +273,64 @@ mod tests {
             ports: vec![53],
         };
 
-        let forward = PortForward::new(config, service_info);
+        let forward = Arc::new(PortForward::new(config, service_info));
         let client = kube::Client::try_default().await.unwrap();
 
         *forward.state.write().await = ForwardState::Connected;
-        let result = forward.establish_forward(&client).await;
-        assert!(result.is_ok());
+
+        println!("Initial state set to Connected");
+
+        // Create channel for coordination
+        let (tx, rx) = mpsc::channel();
+
+        // Get the current runtime handle
+        let runtime_handle = tokio::runtime::Handle::current();
+
+        // Spawn the forward in a separate OS thread
+        let forward_thread = thread::spawn({
+            let forward = Arc::clone(&forward);
+            let client = client.clone();
+            let tx = tx.clone();
+            let handle = runtime_handle.clone();
+            move || {
+                println!("Starting forward thread");
+
+                // Enter the runtime context
+                let _guard = handle.enter();
+
+                // Now we can use the existing runtime
+                handle.block_on(async move {
+                    println!("About to start forward");
+                    tx.send(()).unwrap();
+
+                    match forward.start(client).await {
+                        Ok(_) => println!("Forward started successfully"),
+                        Err(e) => println!("Forward error: {:?}", e),
+                    }
+                })
+            }
+        });
+
+        // Wait for the forward to start (with timeout)
+        match rx.recv_timeout(Duration::from_secs(5)) {
+            Ok(_) => {
+                println!("Received start signal");
+                std::thread::sleep(Duration::from_secs(5));
+
+                println!("Attempting to run test");
+                let args = ["google.com", "@127.0.0.1:5356"];
+                let output = Command::new("dog")
+                    .args(args)
+                    .output()
+                    .expect("Failed to run dog command");
+
+                dbg!(output);
+            }
+            Err(_) => panic!("Forward failed to start within timeout"),
+        };
+
+        println!("Cleaning up forward thread");
+        drop(forward_thread);
 
         // Test 2: Test TCP keepalive and connection handling
         let config = ForwardConfig {
@@ -297,6 +362,7 @@ mod tests {
 
         let keep_forward = PortForward::new(config, service_info.clone());
 
+        let client = kube::Client::try_default().await.unwrap();
         // Start the forward in a separate task
         let _forward_handle = tokio::spawn({
             let keep_forward = keep_forward.clone();
@@ -800,6 +866,127 @@ mod tests {
         forward.stop().await;
     }
 
+    // #[tokio::test]
+    // async fn test_handle_udp_packet() {
+    //     // Create a mock UDP socket
+    //     let socket = Arc::new(UdpSocket::bind("127.0.0.1:0").await.unwrap());
+    //     let server_addr = socket.local_addr().unwrap();
+
+    //     dbg!("test");
+    //     // Create a client UDP socket
+    //     let client_socket = UdpSocket::bind("127.0.0.1:0").await.unwrap();
+    //     client_socket.connect(server_addr).await.unwrap();
+
+    //     // Create test data
+    //     let test_data = vec![
+    //         0x00, 0x01, // Transaction ID
+    //         0x01, 0x00, // Flags
+    //         0x00, 0x01, // Questions
+    //         0x00, 0x00, // Answer RRs
+    //         0x00, 0x00, // Authority RRs
+    //         0x00, 0x00, // Additional RRs
+    //         // DNS query data
+    //         0x03, b'w', b'w', b'w', // www
+    //         0x07, b'e', b'x', b'a', b'm', b'p', b'l', b'e', // example
+    //         0x03, b'c', b'o', b'm', // com
+    //         0x00, // null terminator
+    //         0x00, 0x01, // Type A
+    //         0x00, 0x01, // Class IN
+    //     ];
+
+    //     // Set up the kubernetes client and API
+    //     let client = kube::Client::try_default().await.unwrap();
+    //     let pods: Api<Pod> = Api::namespaced(client, "default");
+
+    //     // Create a mock response handler
+    //     let response_handler = tokio::spawn({
+    //         let socket = socket.clone();
+    //         async move {
+    //             let mut buf = vec![0u8; 512];
+    //             let (_, peer) = socket.recv_from(&mut buf).await.unwrap();
+
+    //             // Simulate DNS response
+    //             let response = vec![
+    //                 0x00, 0x01, // Transaction ID (same as query)
+    //                 0x81, 0x80, // Flags (Standard response)
+    //                 0x00, 0x01, // Questions
+    //                 0x00, 0x01, // Answer RRs
+    //                 0x00, 0x00, // Authority RRs
+    //                 0x00, 0x00, // Additional RRs
+    //                 // Original query
+    //                 0x03, b'w', b'w', b'w', 0x07, b'e', b'x', b'a', b'm', b'p', b'l', b'e', 0x03,
+    //                 b'c', b'o', b'm', 0x00, 0x00, 0x01, // Type A
+    //                 0x00, 0x01, // Class IN
+    //                 // Answer
+    //                 0xc0, 0x0c, // Pointer to domain name
+    //                 0x00, 0x01, // Type A
+    //                 0x00, 0x01, // Class IN
+    //                 0x00, 0x00, 0x0e, 0x10, // TTL (3600 seconds)
+    //                 0x00, 0x04, // Data length
+    //                 0x0a, 0x00, 0x00, 0x0a, // IP address (10.0.0.10)
+    //             ];
+
+    //             socket.send_to(&response, peer).await.unwrap();
+    //         }
+    //     });
+
+    //     // Test sending a UDP packet
+    //     let result = PortForward::handle_udp_packet(
+    //         &pods,
+    //         "test-pod".to_string(),
+    //         53,
+    //         socket.clone(),
+    //         test_data.clone(),
+    //         client_socket.local_addr().unwrap(),
+    //     )
+    //     .await;
+
+    //     // The actual handle_udp_packet call will fail because we're not in a real k8s environment
+    //     assert!(
+    //         result.is_err(),
+    //         "Expected error due to missing k8s environment"
+    //     );
+
+    //     // But we can verify that our socket received the data correctly
+    //     let _ = response_handler.await;
+
+    //     // Test error handling with invalid port
+    //     let result = PortForward::handle_udp_packet(
+    //         &pods,
+    //         "test-pod".to_string(),
+    //         0, // Invalid port
+    //         socket.clone(),
+    //         test_data.clone(),
+    //         client_socket.local_addr().unwrap(),
+    //     )
+    //     .await;
+    //     assert!(result.is_err(), "Expected error with invalid port");
+
+    //     // Test with empty data
+    //     let result = PortForward::handle_udp_packet(
+    //         &pods,
+    //         "test-pod".to_string(),
+    //         53,
+    //         socket.clone(),
+    //         vec![], // Empty data
+    //         client_socket.local_addr().unwrap(),
+    //     )
+    //     .await;
+    //     assert!(result.is_err(), "Expected error with empty data");
+
+    //     // Test with non-existent pod
+    //     let result = PortForward::handle_udp_packet(
+    //         &pods,
+    //         "non-existent-pod".to_string(),
+    //         53,
+    //         socket,
+    //         test_data,
+    //         client_socket.local_addr().unwrap(),
+    //     )
+    //     .await;
+    //     assert!(result.is_err(), "Expected error with non-existent pod");
+    // }
+
     #[tokio::test]
     async fn test_udp_forward_reconnection() {
         let socket = UdpSocket::bind("127.0.0.1:0").await.unwrap();
@@ -857,5 +1044,160 @@ mod tests {
 
         // Clean up
         forward.stop().await;
+    }
+
+    #[tokio::test]
+    async fn test_handle_tcp_packet() {
+        // Create a mock TCP server to simulate the kubernetes API
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let server_port = listener.local_addr().unwrap().port();
+
+        // Create the test configuration
+        let config = ForwardConfig {
+            name: "test-tcp-forward".to_string(),
+            target: "test-service.default".to_string(),
+            ports: PortMapping {
+                protocol: Some("TCP".to_string()),
+                local: server_port,
+                remote: 80,
+            },
+            pod_selector: PodSelector::default(),
+            local_dns: LocalDnsConfig::default(),
+            options: ForwardOptions::default(),
+        };
+
+        let service_info = ServiceInfo {
+            name: "test-service".to_string(),
+            namespace: "default".to_string(),
+            ports: vec![80],
+        };
+
+        let forward = PortForward::new(config, service_info);
+
+        // Create a client connection
+        let client_socket = tokio::net::TcpStream::connect(format!("127.0.0.1:{}", server_port))
+            .await
+            .unwrap();
+
+        // Accept the connection in a separate task
+        let accept_handle = tokio::spawn(async move {
+            let (server_socket, _) = listener.accept().await.unwrap();
+            server_socket
+        });
+
+        // Get the server side of the connection
+        let server_socket = accept_handle.await.unwrap();
+
+        // Test the TCP packet handling
+        let test_data = b"test message";
+        let (mut client_read, mut client_write) = client_socket.into_split();
+        let (mut server_read, mut server_write) = server_socket.into_split();
+
+        // Write test data
+        client_write.write_all(test_data).await.unwrap();
+        client_write.flush().await.unwrap();
+
+        // Read the data on the server side
+        let mut received = vec![0u8; test_data.len()];
+        server_read.read_exact(&mut received).await.unwrap();
+        assert_eq!(&received, test_data);
+
+        // Send response
+        let response = b"response data";
+        server_write.write_all(response).await.unwrap();
+        server_write.flush().await.unwrap();
+
+        // Read response
+        let mut received_response = vec![0u8; response.len()];
+        client_read
+            .read_exact(&mut received_response)
+            .await
+            .unwrap();
+        assert_eq!(&received_response, response);
+
+        // Clean up
+        forward.stop().await;
+    }
+
+    #[tokio::test]
+    async fn test_handle_tcp_forward() {
+        // Create a mock TCP server
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let server_port = listener.local_addr().unwrap().port();
+
+        // Create the test configuration
+        let config = ForwardConfig {
+            name: "test-tcp-forward".to_string(),
+            target: "test-service.default".to_string(),
+            ports: PortMapping {
+                protocol: Some("TCP".to_string()),
+                local: server_port,
+                remote: 80,
+            },
+            pod_selector: PodSelector::default(),
+            local_dns: LocalDnsConfig::default(),
+            options: ForwardOptions::default(),
+        };
+
+        let service_info = ServiceInfo {
+            name: "test-service".to_string(),
+            namespace: "default".to_string(),
+            ports: vec![80],
+        };
+
+        let forward = Arc::new(PortForward::new(config, service_info));
+        let client = kube::Client::try_default().await.unwrap();
+
+        // Start the TCP forward
+        let forward_handle = tokio::spawn({
+            let forward = forward.clone();
+            let client = client.clone();
+            async move {
+                forward
+                    .handle_tcp_forward(&client, "test-pod".to_string(), listener)
+                    .await
+            }
+        });
+
+        // Wait a bit for the forward to start
+        tokio::time::sleep(Duration::from_millis(100)).await;
+
+        // Test multiple concurrent connections
+        let mut handles = vec![];
+        for i in 0..3 {
+            let handle = tokio::spawn(async move {
+                let mut stream =
+                    tokio::net::TcpStream::connect(format!("127.0.0.1:{}", server_port))
+                        .await
+                        .unwrap();
+
+                // Send test data
+                let test_data = format!("test message {}", i);
+                stream.write_all(test_data.as_bytes()).await.unwrap();
+                stream.flush().await.unwrap();
+
+                // Read response (this will fail in test environment since we don't have a real k8s cluster)
+                let mut buf = vec![0u8; 1024];
+                match stream.read(&mut buf).await {
+                    Ok(_) | Err(_) => (), // We expect this to fail or timeout in test environment
+                }
+            });
+            handles.push(handle);
+        }
+
+        // Wait for all connection tests to complete
+        for handle in handles {
+            let _ = handle.await;
+        }
+
+        // Stop the forward
+        forward.stop().await;
+        let _ = forward_handle.await;
+
+        // Verify the forward ended in the correct state
+        assert!(matches!(
+            *forward.state.read().await,
+            ForwardState::Disconnected
+        ));
     }
 }

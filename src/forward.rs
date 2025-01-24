@@ -560,7 +560,7 @@ impl PortForward {
         Ok(())
     }
 
-    async fn handle_udp_packet(
+    pub async fn handle_udp_packet(
         pods: &Api<Pod>,
         pod_name: String,
         port: u16,
@@ -617,7 +617,7 @@ impl PortForward {
         Ok(())
     }
 
-    async fn handle_tcp_forward(
+    pub async fn handle_tcp_forward(
         &self,
         client: &Client,
         pod_name: String,
