@@ -5,7 +5,7 @@ edition = "2021"
 authors = ["Gabriel <kainlite@gmail.com>"]
 description = "A persistent port-forward manager for Kubernetes"
 license = "MIT"
-repository = "https://github.com/kainlite/kube-forward`"
+repository = "https://github.com/kainlite/kube-forward"
 
 [[bin]]
 doc = false
