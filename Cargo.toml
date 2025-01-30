@@ -1,9 +1,11 @@
 [package]
 name = "kube-forward"
-version = "0.4.0"
+version = "0.4.7"
 edition = "2021"
 authors = ["Gabriel <kainlite@gmail.com>"]
 description = "A persistent port-forward manager for Kubernetes"
+license = "MIT"
+repository = "https://github.com/kainlite/kube-forward`"
 
 [[bin]]
 doc = false
