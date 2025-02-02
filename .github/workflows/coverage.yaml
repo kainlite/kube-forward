@@ -19,6 +19,8 @@ jobs:
           target: x86_64-unknown-linux-gnu
           override: true
 
+      - uses: Swatinem/rust-cache@v2
+
       - name: Install dog DNS client
         run: |
           sudo apt-get update

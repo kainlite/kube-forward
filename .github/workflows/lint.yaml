@@ -20,6 +20,9 @@ jobs:
         with:
           toolchain: stable
           components: rustfmt,clippy
+
+      - uses: Swatinem/rust-cache@v2
+
       - run: cargo fmt -- --check
 
       - uses: giraffate/clippy-action@v1
