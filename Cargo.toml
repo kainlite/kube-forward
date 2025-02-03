@@ -39,7 +39,7 @@ tracing-subscriber = { version = "0.3.18", features = ["env-filter"] }
 clap = { version = "4.4.13", features = ["derive"] }
 
 metrics = "0.21"
-metrics-exporter-prometheus = "0.12"
+metrics-exporter-prometheus = "0.16"
 chrono = { version = "0.4", features = ["serde"] }
 ctrlc = "3.4"
 humantime-serde = "1.1.1"
