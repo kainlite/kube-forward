@@ -55,6 +55,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_resolve_service() {
+        let _ = rustls::crypto::ring::default_provider().install_default();
         // Create a mock service
         let _service = Service {
             metadata: ObjectMeta {
