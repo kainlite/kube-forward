@@ -10,6 +10,11 @@ mod tests {
     use k8s_openapi::api::core::v1::Service;
     use kube_forward::error::PortForwardError;
 
+    #[ctor::ctor]
+    fn init() {
+        let _ = rustls::crypto::ring::default_provider().install_default();
+    }
+
     #[test]
     fn test_service_info() {
         let service_info = ServiceInfo {
@@ -55,7 +60,6 @@ mod tests {
 
     #[tokio::test]
     async fn test_resolve_service() {
-        let _ = rustls::crypto::ring::default_provider().install_default();
         // Create a mock service
         let _service = Service {
             metadata: ObjectMeta {

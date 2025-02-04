@@ -21,9 +21,13 @@ mod tests {
 
     use tokio::net::UdpSocket;
 
+    #[ctor::ctor]
+    fn init() {
+        let _ = rustls::crypto::ring::default_provider().install_default();
+    }
+
     #[tokio::test]
     async fn test_health_check() {
-        let _ = rustls::crypto::ring::default_provider().install_default();
         let health_check = HealthCheck::new();
 
         // Start a test server
@@ -54,7 +58,6 @@ mod tests {
 
     #[tokio::test]
     async fn test_port_forward_new() {
-        let _ = rustls::crypto::ring::default_provider().install_default();
         let config = ForwardConfig {
             name: "test-forward".to_string(),
             target: "test-target.test-namespace".to_string(),
@@ -196,7 +199,6 @@ mod tests {
 
     #[tokio::test]
     async fn test_port_forward_stop() {
-        let _ = rustls::crypto::ring::default_provider().install_default();
         let config = ForwardConfig {
             name: "test-forward".to_string(),
             target: "test-target.test-namespace".to_string(),
@@ -247,7 +249,6 @@ mod tests {
     // just a reminder in case it fails later on
     #[tokio::test]
     async fn test_establish_forward() {
-        let _ = rustls::crypto::ring::default_provider().install_default();
         // Test 1: Already Connected state
         let config = ForwardConfig {
             name: "kube-dns".to_string(),
@@ -404,7 +405,6 @@ mod tests {
     // just a reminder in case it fails later on
     #[tokio::test]
     async fn test_monitor_connection() {
-        let _ = rustls::crypto::ring::default_provider().install_default();
         let config = ForwardConfig {
             name: "kube-dns".to_string(),
             target: "kube-dns.kube-system".to_string(),
@@ -469,7 +469,6 @@ mod tests {
 
     #[tokio::test]
     async fn test_forward_connection() {
-        let _ = rustls::crypto::ring::default_provider().install_default();
         let client = kube::Client::try_default().await.unwrap();
         let pods: kube::Api<Pod> = kube::Api::namespaced(client, "default");
 
@@ -598,7 +597,6 @@ mod tests {
 
     #[tokio::test]
     async fn test_get_pod_with_different_states() {
-        let _ = rustls::crypto::ring::default_provider().install_default();
         let client = kube::Client::try_default().await.unwrap();
 
         // Create test pods with different states
@@ -661,7 +659,6 @@ mod tests {
 
     #[tokio::test]
     async fn test_try_release_port_scenarios() {
-        let _ = rustls::crypto::ring::default_provider().install_default();
         let config = ForwardConfig {
             name: "test-forward".to_string(),
             target: "test-target".to_string(),
@@ -705,7 +702,6 @@ mod tests {
 
     #[tokio::test]
     async fn test_get_pod() {
-        let _ = rustls::crypto::ring::default_provider().install_default();
         let config = ForwardConfig {
             name: "test-forward".to_string(),
             target: "test-target.test-namespace".to_string(),
@@ -776,7 +772,6 @@ mod tests {
 
     #[tokio::test]
     async fn test_udp_forward() {
-        let _ = rustls::crypto::ring::default_provider().install_default();
         // Find a free port
         let socket = UdpSocket::bind("127.0.0.1:0").await.unwrap();
         let local_port = socket.local_addr().unwrap().port();
@@ -998,7 +993,6 @@ mod tests {
 
     #[tokio::test]
     async fn test_udp_forward_reconnection() {
-        let _ = rustls::crypto::ring::default_provider().install_default();
         let socket = UdpSocket::bind("127.0.0.1:0").await.unwrap();
         let local_port = socket.local_addr().unwrap().port();
         drop(socket);
@@ -1058,7 +1052,6 @@ mod tests {
 
     #[tokio::test]
     async fn test_handle_tcp_packet() {
-        let _ = rustls::crypto::ring::default_provider().install_default();
         // Create a mock TCP server to simulate the kubernetes API
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let server_port = listener.local_addr().unwrap().port();
@@ -1132,7 +1125,6 @@ mod tests {
 
     #[tokio::test]
     async fn test_handle_tcp_forward() {
-        let _ = rustls::crypto::ring::default_provider().install_default();
         // Create a mock TCP server
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let server_port = listener.local_addr().unwrap().port();

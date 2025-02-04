@@ -6,6 +6,11 @@ use kube_forward::{
 };
 use std::time::Duration;
 
+#[ctor::ctor]
+fn init() {
+    let _ = rustls::crypto::ring::default_provider().install_default();
+}
+
 async fn create_test_config(name: &str, local_port: u16, remote_port: u16) -> ForwardConfig {
     ForwardConfig {
         name: name.to_string(),
@@ -42,7 +47,6 @@ async fn create_test_service(name: &str) -> ServiceInfo {
 
 #[tokio::test]
 async fn test_manager_creation() {
-    let _ = rustls::crypto::ring::default_provider().install_default();
     let client = Client::try_default()
         .await
         .expect("Failed to create client");
@@ -54,7 +58,6 @@ async fn test_manager_creation() {
 
 #[tokio::test]
 async fn test_manager_add_forward() {
-    let _ = rustls::crypto::ring::default_provider().install_default();
     let client = Client::try_default()
         .await
         .expect("Failed to create client");
@@ -75,7 +78,6 @@ async fn test_manager_add_forward() {
 
 #[tokio::test]
 async fn test_manager_multiple_forwards() {
-    let _ = rustls::crypto::ring::default_provider().install_default();
     let client = Client::try_default()
         .await
         .expect("Failed to create client");
@@ -98,7 +100,6 @@ async fn test_manager_multiple_forwards() {
 
 #[tokio::test]
 async fn test_manager_stop_all() {
-    let _ = rustls::crypto::ring::default_provider().install_default();
     let client = Client::try_default()
         .await
         .expect("Failed to create client");

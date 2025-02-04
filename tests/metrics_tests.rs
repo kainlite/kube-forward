@@ -2,6 +2,11 @@
 mod tests {
     use kube_forward::metrics::ForwardMetrics;
 
+    #[ctor::ctor]
+    fn init() {
+        let _ = rustls::crypto::ring::default_provider().install_default();
+    }
+
     #[test]
     fn test_connection_metrics() {
         let metrics = ForwardMetrics::new("test-forward".to_string());

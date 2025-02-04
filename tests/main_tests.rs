@@ -3,6 +3,11 @@ use tempfile::tempdir;
 use tokio::fs::File;
 use tokio::io::AsyncWriteExt;
 
+#[ctor::ctor]
+fn init() {
+    let _ = rustls::crypto::ring::default_provider().install_default();
+}
+
 #[tokio::test]
 async fn test_main_config_loading() {
     // Create a temporary directory
@@ -69,7 +74,6 @@ async fn test_main_invalid_config() {
 
 #[tokio::test]
 async fn test_main_kubernetes_client() {
-    let _ = rustls::crypto::ring::default_provider().install_default();
     // Test Kubernetes client initialization
     let client_result = kube::Client::try_default().await;
     assert!(client_result.is_ok());

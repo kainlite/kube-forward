@@ -7,6 +7,11 @@ mod tests {
     };
     use std::time::Duration;
 
+    #[ctor::ctor]
+    fn init() {
+        let _ = rustls::crypto::ring::default_provider().install_default();
+    }
+
     #[test]
     fn test_config_defaults() {
         // Test default values

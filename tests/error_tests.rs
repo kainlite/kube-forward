@@ -7,10 +7,13 @@ use kube_forward::{
 use std::time::Duration;
 use tokio::net::TcpListener;
 
+#[ctor::ctor]
+fn init() {
+    let _ = rustls::crypto::ring::default_provider().install_default();
+}
+
 #[tokio::test]
 async fn test_port_already_in_use() {
-    let _ = rustls::crypto::ring::default_provider().install_default();
-
     // Bind to a port first
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let bound_port = listener.local_addr().unwrap().port();
@@ -64,7 +67,6 @@ async fn test_port_already_in_use() {
 
 #[tokio::test]
 async fn test_invalid_pod_selector() {
-    let _ = rustls::crypto::ring::default_provider().install_default();
     let config = ForwardConfig {
         name: "test-forward".to_string(),
         target: "test-target".to_string(),
@@ -112,7 +114,6 @@ async fn test_invalid_pod_selector() {
 
 #[tokio::test]
 async fn test_max_retries_exceeded() {
-    let _ = rustls::crypto::ring::default_provider().install_default();
     let config = ForwardConfig {
         name: "test-forward".to_string(),
         target: "test-target".to_string(),
