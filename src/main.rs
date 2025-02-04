@@ -22,6 +22,9 @@ struct Cli {
 
 #[tokio::main]
 async fn main() -> Result<()> {
+    // Initialize rustls for the metrics exporter :head_exploding:
+    let _ = rustls::crypto::ring::default_provider().install_default();
+
     // Initialize logging
     tracing_subscriber::fmt::init();
 
