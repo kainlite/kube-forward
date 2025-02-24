@@ -9,8 +9,8 @@ mod tests {
     use kube_forward::util::ServiceInfo;
     use std::collections::BTreeMap;
     use std::process::Command;
-    use std::sync::mpsc;
     use std::sync::Arc;
+    use std::sync::mpsc;
     use std::thread;
     use tokio::time::timeout;
 

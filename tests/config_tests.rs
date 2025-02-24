@@ -1,9 +1,9 @@
 #[cfg(test)]
 mod tests {
     use kube_forward::config::{
+        ForwardConfig, ForwardOptions, LocalDnsConfig, PodSelector, PortMapping,
         default_forward_options, default_health_check_interval, default_max_retries,
-        default_persistent_connection, default_retry_interval, ForwardConfig, ForwardOptions,
-        LocalDnsConfig, PodSelector, PortMapping,
+        default_persistent_connection, default_retry_interval,
     };
     use std::time::Duration;
 

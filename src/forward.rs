@@ -2,7 +2,7 @@ use socket2::{SockRef, TcpKeepalive};
 use tokio::io::AsyncReadExt;
 use tokio::io::AsyncWriteExt;
 
-use kube::{api::Api, Client};
+use kube::{Client, api::Api};
 
 use crate::{
     config::ForwardConfig,
@@ -16,7 +16,7 @@ use chrono::DateTime;
 use chrono::Utc;
 use k8s_openapi::api::core::v1::Pod;
 use std::sync::Arc;
-use tokio::sync::{broadcast, RwLock};
+use tokio::sync::{RwLock, broadcast};
 
 use tracing::{debug, error, info, warn};
 
@@ -308,20 +308,23 @@ impl PortForward {
             consecutive_failures = 0; // Reset counter on successful check
 
             // Check pod status
-            if let Ok(pod) = self.get_pod(client).await {
-                if let Some(status) = &pod.status {
-                    if let Some(phase) = &status.phase {
-                        if phase != "Running" {
-                            return Err(PortForwardError::ConnectionError(
-                                "Pod is no longer running".to_string(),
-                            ));
+            match self.get_pod(client).await {
+                Ok(pod) => {
+                    if let Some(status) = &pod.status {
+                        if let Some(phase) = &status.phase {
+                            if phase != "Running" {
+                                return Err(PortForwardError::ConnectionError(
+                                    "Pod is no longer running".to_string(),
+                                ));
+                            }
                         }
                     }
                 }
-            } else {
-                return Err(PortForwardError::ConnectionError(
-                    "Pod not found".to_string(),
-                ));
+                _ => {
+                    return Err(PortForwardError::ConnectionError(
+                        "Pod not found".to_string(),
+                    ));
+                }
             }
         }
     }
@@ -390,9 +393,9 @@ impl PortForward {
                             if retry_count >= max_bind_retries {
                                 self.metrics.record_connection_failure();
                                 return Err(PortForwardError::ConnectionError(format!(
-                            "Port {} is already in use. Please choose a different local port",
-                            self.config.ports.local
-                        )));
+                                    "Port {} is already in use. Please choose a different local port",
+                                    self.config.ports.local
+                                )));
                             }
                             // Try to forcefully release the port
                             if let Err(release_err) = self.try_release_port().await {
@@ -532,12 +535,12 @@ impl PortForward {
                                 let data = buf[..len].to_vec();
 
                                 tokio::spawn(async move {
-                                    if let Err(e) = Self::handle_udp_packet(&pods, pod_name, remote_port, socket, data, peer).await {
+                                    match Self::handle_udp_packet(&pods, pod_name, remote_port, socket, data, peer).await { Err(e) => {
                                         error!("Failed to forward UDP packet: {}", e);
                                         metrics.record_connection_failure();
-                                    } else {
+                                    } _ => {
                                         metrics.record_connection_success();
-                                    }
+                                    }}
                                 });
                             }
                             Err(e) => {
@@ -645,12 +648,12 @@ impl PortForward {
                         let metrics = metrics.clone();
 
                         tokio::spawn(async move {
-                            if let Err(e) = Self::forward_connection(&pods, pod_name, remote_port, client_conn).await {
+                            match Self::forward_connection(&pods, pod_name, remote_port, client_conn).await { Err(e) => {
                                 error!("Failed to forward TCP connection: {}", e);
                                 metrics.record_connection_failure();
-                            } else {
+                            } _ => {
                                 metrics.record_connection_success();
-                            }
+                            }}
                         });
                     }
                     _ = shutdown.recv() => {

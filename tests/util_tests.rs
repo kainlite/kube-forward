@@ -5,7 +5,7 @@ mod tests {
     use k8s_openapi::api::core::v1::ServiceSpec;
     use k8s_openapi::apimachinery::pkg::apis::meta::v1::ObjectMeta;
     use kube::Client;
-    use kube_forward::util::{parse_full_dns_name, resolve_service, ServiceInfo};
+    use kube_forward::util::{ServiceInfo, parse_full_dns_name, resolve_service};
 
     use k8s_openapi::api::core::v1::Service;
     use kube_forward::error::PortForwardError;
