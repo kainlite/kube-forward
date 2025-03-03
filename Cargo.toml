@@ -36,7 +36,7 @@ tracing = "0.1.40"
 tracing-subscriber = { version = "0.3.18", features = ["env-filter"] }
 
 # CLI
-clap = { version = "4.4.13", features = ["derive"] }
+clap = { version = "4.5.31", features = ["derive"] }
 
 metrics = "0.24"  
 metrics-exporter-prometheus = "0.16"
