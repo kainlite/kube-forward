@@ -4,6 +4,7 @@ use kube::Client;
 use metrics_exporter_prometheus::PrometheusBuilder;
 use std::path::PathBuf;
 use tracing::{error, info};
+use tracing_subscriber::EnvFilter;
 
 use kube_forward::{config::ForwardConfig, forward::PortForwardManager, util::resolve_service};
 
@@ -26,7 +27,9 @@ async fn main() -> Result<()> {
     let _ = rustls::crypto::ring::default_provider().install_default();
 
     // Initialize logging
-    tracing_subscriber::fmt::init();
+    tracing_subscriber::fmt()
+        .with_env_filter(EnvFilter::new("info"))
+        .init();
 
     // Parse command line arguments
     let cli = Cli::parse();
