@@ -47,7 +47,7 @@ ctrlc = "3.4"
 humantime-serde = "1.1.1"
 futures = "0.3"
 tokio-stream = { version = "0.1.17", features = ["full"] }
-socket2 = "0.5.8"
+socket2 = "0.5.9"
 tempfile = "3.19.1"
 
 [dev-dependencies]
