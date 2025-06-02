@@ -17,7 +17,7 @@ path = "src/lib.rs"
 
 [dependencies]
 # Kubernetes dependencies
-kube = { version = "1.0.0", features = ["runtime", "derive", "client", "config", "ws"] }
+kube = { version = "1.1.0", features = ["runtime", "derive", "client", "config", "ws"] }
 k8s-openapi = { version = "0.25.0", features = ["latest"] }
 
 # Async runtime
