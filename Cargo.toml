@@ -40,7 +40,7 @@ clap = { version = "4.5.40", features = ["derive"] }
 
 metrics = "0.24"  
 metrics-exporter-prometheus = "0.17"
-metrics-util = "0.19" 
+metrics-util = "0.20" 
 rustls = "0.23"
 chrono = { version = "0.4", features = ["serde"] }
 ctrlc = "3.4"
