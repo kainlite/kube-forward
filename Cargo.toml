@@ -21,7 +21,7 @@ kube = { version = "1.1.0", features = ["runtime", "derive", "client", "config",
 k8s-openapi = { version = "0.25.0", features = ["latest"] }
 
 # Async runtime
-tokio = { version = "1.45.1", features = ["full"] }
+tokio = { version = "1.46.1", features = ["full"] }
 
 # Error handling
 anyhow = "1.0.98"
@@ -52,5 +52,5 @@ tempfile = "3.20.0"
 
 [dev-dependencies]
 tokio-test = "0.4.3"
-tokio = { version = "1.45", features = ["full", "test-util"] }
+tokio = { version = "1.46", features = ["full", "test-util"] }
 ctor = "0.4.2"
