@@ -21,7 +21,7 @@ kube = { version = "1.1.0", features = ["runtime", "derive", "client", "config",
 k8s-openapi = { version = "0.25.0", features = ["latest"] }
 
 # Async runtime
-tokio = { version = "1.47.0", features = ["full"] }
+tokio = { version = "1.47.1", features = ["full"] }
 
 # Error handling
 anyhow = "1.0.98"
