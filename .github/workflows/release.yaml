@@ -59,7 +59,7 @@ jobs:
             asset_name: kube-forward-windows-amd64.exe
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Install Rust
         uses: actions-rs/toolchain@v1
