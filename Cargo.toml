@@ -33,7 +33,7 @@ serde_yaml = "0.9.30"
 
 # Logging
 tracing = "0.1.40"
-tracing-subscriber = { version = "0.3.18", features = ["env-filter"] }
+tracing-subscriber = { version = "0.3.20", features = ["env-filter"] }
 
 # CLI
 clap = { version = "4.5.45", features = ["derive"] }
