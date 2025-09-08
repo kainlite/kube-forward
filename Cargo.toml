@@ -43,7 +43,7 @@ metrics-exporter-prometheus = "0.17"
 metrics-util = "0.20" 
 rustls = "0.23"
 chrono = { version = "0.4", features = ["serde"] }
-ctrlc = "3.4"
+ctrlc = "3.5"
 humantime-serde = "1.1.1"
 futures = "0.3"
 tokio-stream = { version = "0.1.17", features = ["full"] }
