@@ -2,8 +2,8 @@
 mod tests {
     use kube_forward::config::{
         ForwardConfig, ForwardOptions, LocalDnsConfig, PodSelector, PortMapping,
-        default_forward_options, default_health_check_interval, default_max_retries,
-        default_persistent_connection, default_retry_interval,
+        default_connection_timeout, default_forward_options, default_health_check_interval,
+        default_max_retries, default_persistent_connection, default_retry_interval,
     };
     use std::time::Duration;
 
@@ -17,6 +17,7 @@ mod tests {
         // Test default values
         assert_eq!(default_retry_interval(), Duration::from_secs(5));
         assert_eq!(default_max_retries(), 3);
+        assert_eq!(default_connection_timeout(), Duration::from_secs(3600));
         assert_eq!(default_health_check_interval(), Duration::from_secs(10));
         assert!(default_persistent_connection());
 
@@ -31,6 +32,10 @@ mod tests {
         assert_eq!(
             default_options.persistent_connection,
             default_persistent_connection()
+        );
+        assert_eq!(
+            default_options.connection_timeout,
+            default_connection_timeout()
         );
     }
 
@@ -49,6 +54,7 @@ mod tests {
                 max_retries: 3,
                 health_check_interval: Duration::from_secs(10),
                 persistent_connection: true,
+                connection_timeout: Duration::from_secs(3600),
             },
             local_dns: LocalDnsConfig {
                 enabled: true,

@@ -40,6 +40,7 @@ async fn test_port_already_in_use() {
             retry_interval: Duration::from_millis(100),
             health_check_interval: Duration::from_secs(5),
             persistent_connection: false,
+            connection_timeout: Duration::from_secs(30),
         },
     };
 
@@ -88,6 +89,7 @@ async fn test_invalid_pod_selector() {
             retry_interval: Duration::from_millis(100),
             health_check_interval: Duration::from_secs(5),
             persistent_connection: false,
+            connection_timeout: Duration::from_secs(30),
         },
     };
 
@@ -103,7 +105,7 @@ async fn test_invalid_pod_selector() {
     let pod = k8s_openapi::api::core::v1::Pod::default();
 
     // Test pod selector matching
-    assert!(!forward.clone().matches_pod_selector(
+    assert!(!forward.matches_pod_selector(
         &pod,
         &PodSelector {
             label: Some("invalid=selector=format".to_string()),
@@ -135,6 +137,7 @@ async fn test_max_retries_exceeded() {
             retry_interval: Duration::from_millis(100),
             health_check_interval: Duration::from_secs(5),
             persistent_connection: false,
+            connection_timeout: Duration::from_secs(30),
         },
     };
 

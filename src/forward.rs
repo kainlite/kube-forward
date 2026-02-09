@@ -22,6 +22,21 @@ use tracing::{debug, error, info, warn};
 
 use futures::TryStreamExt;
 
+/// Maximum consecutive health check failures before reconnecting (TCP)
+const MAX_TCP_HEALTH_FAILURES: u32 = 3;
+/// Maximum consecutive health check failures before reconnecting (UDP)
+const MAX_UDP_HEALTH_FAILURES: u32 = 5;
+/// Maximum number of retries when binding to a local port
+const MAX_BIND_RETRIES: u32 = 3;
+/// Delay between bind retries
+const BIND_RETRY_DELAY: std::time::Duration = std::time::Duration::from_secs(1);
+/// Initial delay before starting health checks to let the connection establish
+const HEALTH_CHECK_INITIAL_DELAY: std::time::Duration = std::time::Duration::from_secs(2);
+/// Maximum attempts for the initial health check
+const MAX_INITIAL_HEALTH_ATTEMPTS: u32 = 3;
+/// Delay between initial health check retries
+const INITIAL_HEALTH_RETRY_DELAY: std::time::Duration = std::time::Duration::from_millis(500);
+
 use std::net::SocketAddr;
 use tokio::{
     io::{AsyncRead, AsyncWrite},
@@ -218,20 +233,15 @@ impl PortForward {
         let health_check = HealthCheck::new();
         let mut interval = tokio::time::interval(self.config.options.health_check_interval);
         let mut consecutive_failures = 0;
-        let protocol = self
-            .config
-            .ports
-            .protocol
-            .clone()
-            .unwrap_or_else(|| "TCP".to_string());
-        let max_failures = if protocol.to_uppercase() == "UDP" {
-            5
+        let protocol = self.config.ports.protocol.as_deref().unwrap_or("TCP");
+        let max_failures = if protocol.eq_ignore_ascii_case("UDP") {
+            MAX_UDP_HEALTH_FAILURES
         } else {
-            3
-        }; // More lenient with UDP
+            MAX_TCP_HEALTH_FAILURES
+        };
 
         // Add initial delay to allow the connection to fully establish
-        tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+        tokio::time::sleep(HEALTH_CHECK_INITIAL_DELAY).await;
 
         // Verify we're in the correct state to start monitoring
         let state = self.state.read().await;
@@ -244,34 +254,25 @@ impl PortForward {
 
         // Initial health check with retry
         let mut initial_attempts = 0;
-        let max_initial_attempts = 3;
-        while initial_attempts < max_initial_attempts {
+        while initial_attempts < MAX_INITIAL_HEALTH_ATTEMPTS {
             if health_check
-                .check_connection(
-                    self.config.ports.local,
-                    &self
-                        .config
-                        .ports
-                        .protocol
-                        .clone()
-                        .expect("Protocol configuration"),
-                )
+                .check_connection(self.config.ports.local, protocol)
                 .await
             {
                 debug!("Initial health check passed for {}", self.config.name);
                 break;
             }
             initial_attempts += 1;
-            if initial_attempts < max_initial_attempts {
+            if initial_attempts < MAX_INITIAL_HEALTH_ATTEMPTS {
                 debug!(
                     "Initial health check attempt {}/{} failed for {}, retrying...",
-                    initial_attempts, max_initial_attempts, self.config.name
+                    initial_attempts, MAX_INITIAL_HEALTH_ATTEMPTS, self.config.name
                 );
-                tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+                tokio::time::sleep(INITIAL_HEALTH_RETRY_DELAY).await;
             }
         }
 
-        if initial_attempts >= max_initial_attempts {
+        if initial_attempts >= MAX_INITIAL_HEALTH_ATTEMPTS {
             return Err(PortForwardError::ConnectionError(
                 "Failed initial health checks".to_string(),
             ));
@@ -280,15 +281,8 @@ impl PortForward {
         loop {
             interval.tick().await;
 
-            // Check TCP connection
-            let protocol = self
-                .config
-                .ports
-                .protocol
-                .clone()
-                .unwrap_or_else(|| "TCP".to_string());
             if !health_check
-                .check_connection(self.config.ports.local, &protocol)
+                .check_connection(self.config.ports.local, protocol)
                 .await
             {
                 consecutive_failures += 1;
@@ -361,8 +355,6 @@ impl PortForward {
 
         // Try to bind to the port with retries
         let mut retry_count = 0;
-        let max_bind_retries = 3;
-        let bind_retry_delay = std::time::Duration::from_secs(1);
 
         // Create TCP listener for the local port
         debug!(
@@ -371,12 +363,7 @@ impl PortForward {
         );
 
         // Create listener based on protocol
-        let protocol = self
-            .config
-            .ports
-            .protocol
-            .clone()
-            .unwrap_or_else(|| "TCP".to_string());
+        let protocol = self.config.ports.protocol.as_deref().unwrap_or("TCP");
         debug!(
             "Creating {} listener for the local port: {}",
             protocol, self.config.ports.local
@@ -390,7 +377,7 @@ impl PortForward {
                     match TcpListener::bind(addr).await {
                         Ok(listener) => break listener,
                         Err(e) if e.kind() == std::io::ErrorKind::AddrInUse => {
-                            if retry_count >= max_bind_retries {
+                            if retry_count >= MAX_BIND_RETRIES {
                                 self.metrics.record_connection_failure();
                                 return Err(PortForwardError::ConnectionError(format!(
                                     "Port {} is already in use. Please choose a different local port",
@@ -407,9 +394,9 @@ impl PortForward {
                             retry_count += 1;
                             debug!(
                                 "Port {} in use, retrying in {:?}...",
-                                self.config.ports.local, bind_retry_delay
+                                self.config.ports.local, BIND_RETRY_DELAY
                             );
-                            tokio::time::sleep(bind_retry_delay).await;
+                            tokio::time::sleep(BIND_RETRY_DELAY).await;
                             continue;
                         }
                         Err(e) => {
@@ -457,6 +444,7 @@ impl PortForward {
         pod_name: String,
         port: u16,
         mut client_conn: impl AsyncRead + AsyncWrite + Unpin,
+        connection_timeout: std::time::Duration,
     ) -> anyhow::Result<()> {
         debug!("Starting port forward for port {}", port);
 
@@ -467,17 +455,15 @@ impl PortForward {
             .map_err(|e| anyhow::anyhow!("Failed to create portforward: {}", e))?;
 
         // Get the stream for our port
-        let mut upstream_conn = pf
-            .take_stream(port) // Use port instead of 0
-            .ok_or_else(|| {
-                anyhow::anyhow!("Failed to get port forward stream for port {}", port)
-            })?;
+        let mut upstream_conn = pf.take_stream(port).ok_or_else(|| {
+            anyhow::anyhow!("Failed to get port forward stream for port {}", port)
+        })?;
 
         debug!("Port forward stream established for port {}", port);
 
         // Copy data bidirectionally with timeout
         match tokio::time::timeout(
-            std::time::Duration::from_secs(30), // 30 second timeout
+            connection_timeout,
             tokio::io::copy_bidirectional(&mut client_conn, &mut upstream_conn),
         )
         .await
@@ -490,8 +476,14 @@ impl PortForward {
                 return Err(anyhow::anyhow!("Data transfer error: {}", e));
             }
             Err(_) => {
-                warn!("Connection timeout for port {}", port);
-                return Err(anyhow::anyhow!("Connection timeout"));
+                warn!(
+                    "Connection timeout for port {} after {:?}",
+                    port, connection_timeout
+                );
+                return Err(anyhow::anyhow!(
+                    "Connection timeout after {:?}",
+                    connection_timeout
+                ));
             }
         }
 
@@ -629,6 +621,7 @@ impl PortForward {
         let state = self.state.clone();
         let name = self.config.name.clone();
         let remote_port = self.config.ports.remote;
+        let connection_timeout = self.config.options.connection_timeout;
         let mut shutdown = self.shutdown.subscribe();
         let metrics = self.metrics.clone();
         let pods: Api<Pod> = Api::namespaced(client.clone(), &self.service_info.namespace);
@@ -648,7 +641,7 @@ impl PortForward {
                         let metrics = metrics.clone();
 
                         tokio::spawn(async move {
-                            match Self::forward_connection(&pods, pod_name, remote_port, client_conn).await { Err(e) => {
+                            match Self::forward_connection(&pods, pod_name, remote_port, client_conn, connection_timeout).await { Err(e) => {
                                 error!("Failed to forward TCP connection: {}", e);
                                 metrics.record_connection_failure();
                             } _ => {
@@ -686,10 +679,7 @@ impl PortForward {
             .map_err(PortForwardError::KubeError)?;
 
         for pod in pod_list.items {
-            if self
-                .clone()
-                .matches_pod_selector(&pod, &self.config.pod_selector)
-            {
+            if self.matches_pod_selector(&pod, &self.config.pod_selector) {
                 if let Some(status) = &pod.status {
                     if let Some(phase) = &status.phase {
                         if phase == "Running" {
@@ -701,12 +691,14 @@ impl PortForward {
         }
 
         Err(PortForwardError::ConnectionError(format!(
-            "No ready pods found matching selector for service {}",
-            self.service_info.name
+            "No ready pods found matching selector for service {} (label: {:?}, annotation: {:?})",
+            self.service_info.name,
+            self.config.pod_selector.label,
+            self.config.pod_selector.annotation,
         )))
     }
 
-    pub fn matches_pod_selector(self, pod: &Pod, selector: &PodSelector) -> bool {
+    pub fn matches_pod_selector(&self, pod: &Pod, selector: &PodSelector) -> bool {
         // If no selector is specified, fall back to checking if service name is in any label
         if selector.label.is_none() && selector.annotation.is_none() {
             return pod
@@ -718,7 +710,7 @@ impl PortForward {
 
         // Check label if specified
         if let Some(label_selector) = &selector.label {
-            let (key, value) = self.clone().parse_selector(label_selector);
+            let (key, value) = Self::parse_selector(label_selector);
             if pod
                 .metadata
                 .labels
@@ -731,7 +723,7 @@ impl PortForward {
 
         // Check annotation if specified
         if let Some(annotation_selector) = &selector.annotation {
-            let (key, value) = self.clone().parse_selector(annotation_selector);
+            let (key, value) = Self::parse_selector(annotation_selector);
             if pod
                 .metadata
                 .annotations
@@ -745,7 +737,7 @@ impl PortForward {
         true
     }
 
-    pub fn parse_selector(self, selector: &str) -> (&str, &str) {
+    pub fn parse_selector(selector: &str) -> (&str, &str) {
         let parts: Vec<&str> = selector.split('=').collect();
         match parts.as_slice() {
             [key, value] => (*key, *value),

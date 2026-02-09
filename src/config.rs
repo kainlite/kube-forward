@@ -32,6 +32,8 @@ pub struct ForwardOptions {
     pub persistent_connection: bool,
     #[serde(with = "humantime_serde", default = "default_health_check_interval")]
     pub health_check_interval: Duration,
+    #[serde(with = "humantime_serde", default = "default_connection_timeout")]
+    pub connection_timeout: Duration,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, Default, PartialEq)]
@@ -52,6 +54,7 @@ pub fn default_forward_options() -> ForwardOptions {
         max_retries: default_max_retries(),
         persistent_connection: default_persistent_connection(),
         health_check_interval: default_health_check_interval(),
+        connection_timeout: default_connection_timeout(),
     }
 }
 
@@ -69,6 +72,10 @@ pub fn default_health_check_interval() -> Duration {
 
 pub fn default_persistent_connection() -> bool {
     true
+}
+
+pub fn default_connection_timeout() -> Duration {
+    Duration::from_secs(3600)
 }
 
 pub fn default_protocol() -> Option<String> {
