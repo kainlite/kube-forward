@@ -9,8 +9,6 @@ pub struct ForwardConfig {
     #[serde(default = "default_forward_options")]
     pub options: ForwardOptions,
     #[serde(default)]
-    pub local_dns: LocalDnsConfig,
-    #[serde(default)]
     pub pod_selector: PodSelector,
 }
 
@@ -34,12 +32,6 @@ pub struct ForwardOptions {
     pub health_check_interval: Duration,
     #[serde(with = "humantime_serde", default = "default_connection_timeout")]
     pub connection_timeout: Duration,
-}
-
-#[derive(Clone, Debug, Serialize, Deserialize, Default, PartialEq)]
-pub struct LocalDnsConfig {
-    pub enabled: bool,
-    pub hostname: Option<String>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Default)]

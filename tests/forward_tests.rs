@@ -4,7 +4,7 @@ mod tests {
     use k8s_openapi::api::core::v1::{PodSpec, PodStatus};
     use k8s_openapi::apimachinery::pkg::apis::meta::v1::ObjectMeta;
     use kube_forward::config::{ForwardConfig, PodSelector};
-    use kube_forward::config::{ForwardOptions, LocalDnsConfig, PortMapping};
+    use kube_forward::config::{ForwardOptions, PortMapping};
     use kube_forward::forward::{ForwardState, HealthCheck, PortForward};
     use kube_forward::util::ServiceInfo;
     use std::collections::BTreeMap;
@@ -117,10 +117,6 @@ mod tests {
                 label: None,
                 annotation: None,
             },
-            local_dns: kube_forward::config::LocalDnsConfig {
-                enabled: false,
-                hostname: None,
-            },
             options: kube_forward::config::ForwardOptions {
                 max_retries: 3,
                 retry_interval: Duration::from_secs(1),
@@ -151,10 +147,6 @@ mod tests {
                 protocol: Some("TCP".to_string()),
                 local: 8080,
                 remote: 80,
-            },
-            local_dns: kube_forward::config::LocalDnsConfig {
-                enabled: false,
-                hostname: None,
             },
             pod_selector: PodSelector {
                 label: Some("app=myapp".to_string()),
@@ -207,10 +199,6 @@ mod tests {
         let config = ForwardConfig {
             name: "test-forward".to_string(),
             target: "test-target.test-namespace".to_string(),
-            local_dns: kube_forward::config::LocalDnsConfig {
-                enabled: false,
-                hostname: None,
-            },
             ports: kube_forward::config::PortMapping {
                 protocol: Some("TCP".to_string()),
                 local: 8080,
@@ -281,10 +269,6 @@ mod tests {
                 label: None,
                 annotation: None,
             },
-            local_dns: kube_forward::config::LocalDnsConfig {
-                enabled: false,
-                hostname: None,
-            },
             options: kube_forward::config::ForwardOptions {
                 max_retries: 3,
                 retry_interval: Duration::from_secs(1),
@@ -333,7 +317,6 @@ mod tests {
                 label: Some("k8s-app=kube-dns".to_string()),
                 annotation: None,
             },
-            local_dns: LocalDnsConfig::default(),
             options: ForwardOptions {
                 retry_interval: Duration::from_secs(5),
                 max_retries: 5,
@@ -421,7 +404,6 @@ mod tests {
                 label: Some("k8s-app=kube-dns".to_string()),
                 annotation: None,
             },
-            local_dns: LocalDnsConfig::default(),
             options: ForwardOptions {
                 max_retries: 1,
                 retry_interval: Duration::from_millis(100),
@@ -490,10 +472,6 @@ mod tests {
                 label: None,
                 annotation: None,
             },
-            local_dns: kube_forward::config::LocalDnsConfig {
-                enabled: false,
-                hostname: None,
-            },
             options: kube_forward::config::ForwardOptions {
                 max_retries: 3,
                 retry_interval: Duration::from_secs(1),
@@ -516,6 +494,10 @@ mod tests {
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let port = listener.local_addr().unwrap().port();
         forward.config.ports.local = port;
+
+        // Monitoring is tied to a specific established pod; set one so the loop
+        // proceeds to the local-listener health check (which we make fail below).
+        *forward.active_pod.write().await = Some("kube-dns-test".to_string());
 
         // Start monitoring in a separate task
         let monitor_handle = tokio::spawn({
@@ -602,10 +584,6 @@ mod tests {
                 protocol: Some("TCP".to_string()),
                 local: 8080,
                 remote: 80,
-            },
-            local_dns: kube_forward::config::LocalDnsConfig {
-                enabled: false,
-                hostname: None,
             },
             pod_selector: PodSelector {
                 label: Some("app=myapp".to_string()),
@@ -719,10 +697,6 @@ mod tests {
                 label: Some("app=test".to_string()),
                 annotation: None,
             },
-            local_dns: LocalDnsConfig {
-                enabled: false,
-                hostname: None,
-            },
             options: ForwardOptions {
                 max_retries: 3,
                 retry_interval: Duration::from_secs(1),
@@ -756,7 +730,6 @@ mod tests {
                 remote: 80,
             },
             pod_selector: PodSelector::default(),
-            local_dns: LocalDnsConfig::default(),
             options: ForwardOptions::default(),
         };
 
@@ -801,10 +774,6 @@ mod tests {
             pod_selector: PodSelector {
                 label: Some("app=test".to_string()),
                 annotation: None,
-            },
-            local_dns: kube_forward::config::LocalDnsConfig {
-                enabled: false,
-                hostname: None,
             },
             options: kube_forward::config::ForwardOptions {
                 max_retries: 3,
@@ -852,7 +821,6 @@ mod tests {
                 label: Some("k8s-app=kube-dns".to_string()),
                 annotation: None,
             },
-            local_dns: LocalDnsConfig::default(),
             options: ForwardOptions {
                 max_retries: 3,
                 retry_interval: Duration::from_millis(100),
@@ -1035,7 +1003,6 @@ mod tests {
                 remote: 80,
             },
             pod_selector: PodSelector::default(),
-            local_dns: LocalDnsConfig::default(),
             options: ForwardOptions::default(),
         };
 
@@ -1108,7 +1075,6 @@ mod tests {
                 remote: 80,
             },
             pod_selector: PodSelector::default(),
-            local_dns: LocalDnsConfig::default(),
             options: ForwardOptions::default(),
         };
 
@@ -1172,5 +1138,54 @@ mod tests {
             *forward.state.read().await,
             ForwardState::Disconnected
         ));
+    }
+
+    // Cancelling a forward's session must tear down its TCP listener so the local
+    // port becomes free to rebind. This is the core of the reconnect fix: without
+    // it, a reconnect after a pod restart would wedge on "port already in use".
+    #[tokio::test]
+    async fn test_tcp_listener_released_on_session_cancel() {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+
+        let config = ForwardConfig {
+            name: "teardown".to_string(),
+            target: "svc.ns".to_string(),
+            ports: PortMapping {
+                protocol: Some("TCP".to_string()),
+                local: port,
+                remote: 80,
+            },
+            pod_selector: PodSelector::default(),
+            options: ForwardOptions::default(),
+        };
+        let service_info = ServiceInfo {
+            name: "svc".to_string(),
+            namespace: "ns".to_string(),
+            ports: vec![80],
+        };
+
+        let forward = PortForward::new(config, service_info);
+        let client = kube::Client::try_default().await.unwrap();
+
+        forward
+            .handle_tcp_forward(&client, "some-pod".to_string(), listener)
+            .await
+            .unwrap();
+
+        // The listener task now holds the port: a fresh bind must fail.
+        assert!(
+            TcpListener::bind(("127.0.0.1", port)).await.is_err(),
+            "port should be held by the listener task"
+        );
+
+        // Cancel the session; the listener task should exit and free the port.
+        forward.session.read().await.cancel();
+        tokio::time::sleep(Duration::from_millis(200)).await;
+
+        assert!(
+            TcpListener::bind(("127.0.0.1", port)).await.is_ok(),
+            "port should be free after cancelling the session"
+        );
     }
 }

@@ -1,5 +1,5 @@
 use kube_forward::{
-    config::{ForwardConfig, ForwardOptions, LocalDnsConfig, PodSelector, PortMapping},
+    config::{ForwardConfig, ForwardOptions, PodSelector, PortMapping},
     error::PortForwardError,
     forward::PortForward,
     util::ServiceInfo,
@@ -30,10 +30,6 @@ async fn test_port_already_in_use() {
         pod_selector: PodSelector {
             label: None,
             annotation: None,
-        },
-        local_dns: LocalDnsConfig {
-            enabled: false,
-            hostname: None,
         },
         options: ForwardOptions {
             max_retries: 1,
@@ -80,10 +76,6 @@ async fn test_invalid_pod_selector() {
             label: Some("invalid=selector=format".to_string()),
             annotation: None,
         },
-        local_dns: LocalDnsConfig {
-            enabled: false,
-            hostname: None,
-        },
         options: ForwardOptions {
             max_retries: 1,
             retry_interval: Duration::from_millis(100),
@@ -127,10 +119,6 @@ async fn test_max_retries_exceeded() {
         pod_selector: PodSelector {
             label: None,
             annotation: None,
-        },
-        local_dns: LocalDnsConfig {
-            enabled: false,
-            hostname: None,
         },
         options: ForwardOptions {
             max_retries: 2,

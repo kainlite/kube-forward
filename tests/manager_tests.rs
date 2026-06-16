@@ -1,6 +1,6 @@
 use kube::Client;
 use kube_forward::{
-    config::{ForwardConfig, ForwardOptions, LocalDnsConfig, PodSelector, PortMapping},
+    config::{ForwardConfig, ForwardOptions, PodSelector, PortMapping},
     forward::PortForwardManager,
     util::ServiceInfo,
 };
@@ -23,10 +23,6 @@ async fn create_test_config(name: &str, local_port: u16, remote_port: u16) -> Fo
         pod_selector: PodSelector {
             label: Some("app=test".to_string()),
             annotation: None,
-        },
-        local_dns: LocalDnsConfig {
-            enabled: false,
-            hostname: None,
         },
         options: ForwardOptions {
             max_retries: 3,

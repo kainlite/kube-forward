@@ -5,7 +5,7 @@ mod tests {
     use k8s_openapi::api::core::v1::ServiceSpec;
     use k8s_openapi::apimachinery::pkg::apis::meta::v1::ObjectMeta;
     use kube::Client;
-    use kube_forward::util::{ServiceInfo, parse_full_dns_name, resolve_service};
+    use kube_forward::util::{ServiceInfo, parse_full_dns_name, parse_target, resolve_service};
 
     use k8s_openapi::api::core::v1::Service;
     use kube_forward::error::PortForwardError;
@@ -56,6 +56,27 @@ mod tests {
             }
             _ => panic!("Expected DnsError"),
         }
+    }
+
+    #[test]
+    fn test_parse_target() {
+        // Bare service name: namespace deferred to the client default.
+        assert_eq!(parse_target("svc").unwrap(), ("svc", None));
+
+        // service.namespace
+        assert_eq!(parse_target("svc.ns").unwrap(), ("svc", Some("ns")));
+
+        // Longer DNS name: only the first two labels matter.
+        assert_eq!(
+            parse_target("svc.ns.svc.cluster.local").unwrap(),
+            ("svc", Some("ns"))
+        );
+
+        // Invalid forms.
+        assert!(parse_target("").is_err());
+        assert!(parse_target(".").is_err());
+        assert!(parse_target(".ns").is_err());
+        assert!(parse_target("svc.").is_err());
     }
 
     #[tokio::test]

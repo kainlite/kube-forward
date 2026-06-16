@@ -47,8 +47,11 @@ ctrlc = "3.5"
 humantime-serde = "1.1.1"
 futures = "0.3"
 tokio-stream = { version = "0.1.17", features = ["full"] }
+tokio-util = "0.7"
 socket2 = "0.6.0"
 tempfile = "3.21.0"
+rand = "0.8"
+inquire = "0.7"
 
 [dev-dependencies]
 tokio-test = "0.4.3"

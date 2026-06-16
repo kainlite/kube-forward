@@ -10,15 +10,12 @@ pub struct ServiceInfo {
 }
 
 pub async fn resolve_service(client: Client, target: &str) -> Result<ServiceInfo> {
-    let parts: Vec<&str> = target.split('.').collect();
-
     let client = client.clone();
-    // Fix the temporary value issue by getting the namespace first
+    // Get the default namespace before borrowing the client mutably below.
     let default_ns = client.default_namespace();
-    let (service_name, namespace) = match parts.len() {
-        1 => (parts[0], default_ns),
-        2 => (parts[0], parts[1]),
-        _ => parse_full_dns_name(&parts)?,
+    let (service_name, namespace) = match parse_target(target)? {
+        (name, Some(ns)) => (name, ns),
+        (name, None) => (name, default_ns),
     };
 
     let client = client.clone();
@@ -49,5 +46,23 @@ pub fn parse_full_dns_name<'a>(parts: &'a [&'a str]) -> Result<(&'a str, &'a str
         Err(PortForwardError::DnsError(
             "Invalid DNS name format".to_string(),
         ))
+    }
+}
+
+/// Parse a `target` string into a service name and optional namespace.
+///
+/// Accepts `service`, `service.namespace`, or a longer DNS-style name where only
+/// the first two labels are significant. A `None` namespace means the caller
+/// should fall back to the client's default namespace. This is pure (no cluster
+/// access) so it can be reused by config validation.
+pub fn parse_target(target: &str) -> Result<(&str, Option<&str>)> {
+    let parts: Vec<&str> = target.split('.').collect();
+    match parts.as_slice() {
+        [name] if !name.is_empty() => Ok((name, None)),
+        [name, ns, ..] if !name.is_empty() && !ns.is_empty() => Ok((name, Some(ns))),
+        _ => Err(PortForwardError::DnsError(format!(
+            "invalid target '{}', expected 'service' or 'service.namespace'",
+            target
+        ))),
     }
 }

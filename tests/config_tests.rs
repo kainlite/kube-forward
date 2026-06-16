@@ -1,9 +1,9 @@
 #[cfg(test)]
 mod tests {
     use kube_forward::config::{
-        ForwardConfig, ForwardOptions, LocalDnsConfig, PodSelector, PortMapping,
-        default_connection_timeout, default_forward_options, default_health_check_interval,
-        default_max_retries, default_persistent_connection, default_retry_interval,
+        ForwardConfig, ForwardOptions, PodSelector, PortMapping, default_connection_timeout,
+        default_forward_options, default_health_check_interval, default_max_retries,
+        default_persistent_connection, default_retry_interval,
     };
     use std::time::Duration;
 
@@ -56,10 +56,6 @@ mod tests {
                 persistent_connection: true,
                 connection_timeout: Duration::from_secs(3600),
             },
-            local_dns: LocalDnsConfig {
-                enabled: true,
-                hostname: Some("test.local".to_string()),
-            },
             pod_selector: PodSelector {
                 label: Some("app=test".to_string()),
                 annotation: Some("env=prod".to_string()),
@@ -81,8 +77,6 @@ mod tests {
             config.options.persistent_connection,
             deserialized.options.persistent_connection
         );
-        assert_eq!(config.local_dns.enabled, deserialized.local_dns.enabled);
-        assert_eq!(config.local_dns.hostname, deserialized.local_dns.hostname);
         assert_eq!(config.pod_selector.label, deserialized.pod_selector.label);
         assert_eq!(
             config.pod_selector.annotation,
@@ -101,7 +95,6 @@ mod tests {
                 remote: 80,
             },
             options: ForwardOptions::default(),
-            local_dns: LocalDnsConfig::default(),
             pod_selector: PodSelector::default(),
         };
 
