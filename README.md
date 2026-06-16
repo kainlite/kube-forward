@@ -172,7 +172,7 @@ You can also download the binary directly from the releases page.
 To run it and be able to use your port-forwards, run:
 ```bash
 ❯ kube-forward -c config.yaml
-kube-forward 0.4.8 — 4 forwards configured
+kube-forward 0.6.0 — 4 forwards configured
 
   argocd-ui   127.0.0.1:8080 -> argocd-server.argocd:8080  TCP
   grafana-ui  127.0.0.1:3001 -> grafana.monitoring:3000    TCP

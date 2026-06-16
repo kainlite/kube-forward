@@ -34,7 +34,8 @@ detect_platform() {
             ;;
     esac
 
-    echo "${OS}_${ARCH}"
+    # Must match the release asset names, e.g. kube-forward-linux-amd64
+    echo "${OS}-${ARCH}"
 }
 
 # Function to get the latest release version
