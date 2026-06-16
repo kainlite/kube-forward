@@ -223,3 +223,10 @@ series carries a `service="kube-forward"` label and a `forward="<name>"` label s
 ❯ kube-forward -c config.yaml --expose-metrics --metrics-port 9292
 ❯ curl -s localhost:9292/metrics | grep port_forward
 ```
+
+### Releasing
+Releases are automated with [release-please](https://github.com/googleapis/release-please). Land changes on `master`
+using [Conventional Commits](https://www.conventionalcommits.org/) (`feat:`, `fix:`, and `feat!:` or a `BREAKING CHANGE:`
+footer for a major bump). release-please maintains a release PR that bumps the version in `Cargo.toml` and updates
+`CHANGELOG.md`; merging that PR tags the release, and the workflow builds and uploads the binaries. No manual version
+bumps or tags are needed.
