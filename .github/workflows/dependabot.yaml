@@ -26,9 +26,11 @@ jobs:
          PR_URL: ${{github.event.pull_request.html_url}}
          GITHUB_TOKEN: ${{secrets.GITHUB_TOKEN}}
 
-      - name: Enable auto-merge for Dependabot PRs
-        #if: ${{contains(steps.metadata.outputs.dependency-names, 'my-dependency') && steps.metadata.outputs.update-type == 'version-update:semver-patch'}}
-        run: gh pr merge --auto --squash "$PR_URL"
+      - name: Merge Dependabot PRs
+        # Prefer native auto-merge (waits on required checks); fall back to a direct
+        # squash merge when auto-merge cannot be enabled (e.g. the branch defines no
+        # required status checks). This job already gates on `needs: [tests]`.
+        run: gh pr merge --auto --squash "$PR_URL" || gh pr merge --squash "$PR_URL"
         env:
           PR_URL: ${{github.event.pull_request.html_url}}
           GITHUB_TOKEN: ${{secrets.GITHUB_TOKEN}}
