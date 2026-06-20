@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.6.2](https://github.com/kainlite/kube-forward/compare/v0.6.1...v0.6.2) (2026-06-20)
+
+
+### Bug Fixes
+
+* **deps:** bump rand from 0.8.6 to 0.9.2 ([#94](https://github.com/kainlite/kube-forward/issues/94)) ([0c38d4c](https://github.com/kainlite/kube-forward/commit/0c38d4c64ca3a6c2eb96051fbb287605c48087eb))
+* **deps:** bump socket2 from 0.6.2 to 0.6.4 ([#93](https://github.com/kainlite/kube-forward/issues/93)) ([e4ac630](https://github.com/kainlite/kube-forward/commit/e4ac630b5a78a902d7ddb9c156d171bfd1f6eb91))
+* **deps:** bump tempfile from 3.24.0 to 3.27.0 ([#95](https://github.com/kainlite/kube-forward/issues/95)) ([1c9cf95](https://github.com/kainlite/kube-forward/commit/1c9cf958c35c517279182d977cad4a5c11741454))
+* **deps:** bump the kube group with 2 updates ([#92](https://github.com/kainlite/kube-forward/issues/92)) ([d505516](https://github.com/kainlite/kube-forward/commit/d5055160873b862168d931f4bbb31c6428610be5))
+
 ## [0.6.1](https://github.com/kainlite/kube-forward/compare/v0.6.0...v0.6.1) (2026-06-17)
 
 
