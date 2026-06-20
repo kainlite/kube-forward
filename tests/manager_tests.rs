@@ -6,7 +6,7 @@ use kube_forward::{
 };
 use std::time::Duration;
 
-#[ctor::ctor]
+#[ctor::ctor(unsafe)]
 fn init() {
     let _ = rustls::crypto::ring::default_provider().install_default();
 }

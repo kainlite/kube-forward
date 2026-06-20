@@ -10,7 +10,7 @@ mod tests {
     use k8s_openapi::api::core::v1::Service;
     use kube_forward::error::PortForwardError;
 
-    #[ctor::ctor]
+    #[ctor::ctor(unsafe)]
     fn init() {
         let _ = rustls::crypto::ring::default_provider().install_default();
     }

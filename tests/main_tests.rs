@@ -3,7 +3,7 @@ use tempfile::tempdir;
 use tokio::fs::File;
 use tokio::io::AsyncWriteExt;
 
-#[ctor::ctor]
+#[ctor::ctor(unsafe)]
 fn init() {
     let _ = rustls::crypto::ring::default_provider().install_default();
 }

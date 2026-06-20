@@ -2,7 +2,7 @@
 mod tests {
     use kube_forward::metrics::ForwardMetrics;
 
-    #[ctor::ctor]
+    #[ctor::ctor(unsafe)]
     fn init() {
         let _ = rustls::crypto::ring::default_provider().install_default();
     }

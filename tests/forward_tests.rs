@@ -21,7 +21,7 @@ mod tests {
 
     use tokio::net::UdpSocket;
 
-    #[ctor::ctor]
+    #[ctor::ctor(unsafe)]
     fn init() {
         let _ = rustls::crypto::ring::default_provider().install_default();
     }

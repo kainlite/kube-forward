@@ -4,7 +4,7 @@ mod tests {
     use std::time::Duration;
     use tokio::io::{AsyncReadExt, AsyncWriteExt, duplex};
 
-    #[ctor::ctor]
+    #[ctor::ctor(unsafe)]
     fn init() {
         let _ = rustls::crypto::ring::default_provider().install_default();
     }
