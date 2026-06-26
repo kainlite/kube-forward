@@ -50,7 +50,7 @@ tokio-stream = { version = "0.1.17", features = ["full"] }
 tokio-util = "0.7"
 socket2 = "0.6.0"
 tempfile = "3.21.0"
-rand = "0.9"
+rand = "0.10"
 inquire = "0.7"
 
 [dev-dependencies]
