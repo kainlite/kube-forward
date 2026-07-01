@@ -58,7 +58,7 @@ jobs:
             asset_name: kube-forward-windows-amd64.exe
             cross: false
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
 
       - uses: dtolnay/rust-toolchain@stable
         with:
